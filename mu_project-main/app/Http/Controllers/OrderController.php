@@ -3,44 +3,67 @@
 namespace App\Http\Controllers;
 
 use App\Models\Order;
-use App\Models\MenuItem;
 use App\Models\OrderItem;
-use App\Models\InventoryLog;
-use App\Models\Setting;
+use App\Models\MenuItem;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class OrderController extends Controller
 {
+    // LIST ORDERS
     public function index()
     {
-        $orders = Order::with(['user', 'orderItems.menuItem'])->latest()->get();
-
-        $metrics = [
-            'count' => $orders->count(),
-        ];
+        $orders = Order::with(['user', 'orderItems.menuItem'])
+            ->latest()
+            ->get()
+            ->map(function ($o) {
+                return [
+                    'id'             => $o->id,
+                    'status'         => $o->status,
+                    'payment_method' => $o->payment_method,
+                    'is_paid'        => (bool) $o->is_paid,
+                    'created_at'     => $o->created_at?->toDateTimeString(),
+                    'user'           => $o->user ? [
+                        'id'    => $o->user->id,
+                        'name'  => $o->user->name,
+                        'email' => $o->user->email,
+                    ] : null,
+                    'items'          => $o->orderItems->map(fn ($it) => [
+                        'id'       => $it->id,
+                        'quantity' => $it->quantity, // make sure your column is "quantity"
+                        'menu_item'=> [
+                            'id'    => $it->menuItem?->id,
+                            'name'  => $it->menuItem?->name,
+                            'price' => $it->menuItem?->price,
+                        ],
+                    ]),
+                ];
+            });
 
         return Inertia::render('Orders/Index', [
-            'orders'  => $orders,
-            'metrics' => $metrics,
-            'flash'   => session()->get('success'),
+            'orders' => $orders,
         ]);
     }
 
+    // CREATE FORM
     public function create()
     {
-        $menuItems = MenuItem::select('id','name','price','stock')->orderBy('name')->get();
+        $menuItems = MenuItem::select('id','name','price','stock')
+            ->orderBy('name')
+            ->get();
 
         return Inertia::render('Orders/Create', [
             'menuItems' => $menuItems,
         ]);
     }
 
+    // STORE
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'items' => 'required|array|min:1',
+            'items'                => 'required|array|min:1',
             'items.*.menu_item_id' => 'required|integer|exists:menu_items,id',
             'items.*.quantity'     => 'required|integer|min:1',
             'payment_method'       => 'required|in:cash,qr',
@@ -49,38 +72,28 @@ class OrderController extends Controller
         $order = Order::create([
             'user_id'        => auth()->id(),
             'status'         => 'pending',
-            'payment_method' => $request->payment_method,
-            'is_paid'        => $request->payment_method === 'cash',
+            'payment_method' => $validated['payment_method'],
+            'is_paid'        => $validated['payment_method'] === 'cash',
         ]);
 
-        foreach ($validated['items'] as $itemData) {
-            $menuItem  = MenuItem::findOrFail($itemData['menu_item_id']);
-            $quantity  = (int) $itemData['quantity'];
-
+        foreach ($validated['items'] as $row) {
             OrderItem::create([
                 'order_id'     => $order->id,
-                'menu_item_id' => $menuItem->id,
-                'quantity'     => $quantity,
-            ]);
-
-            $menuItem->decrement('stock', $quantity);
-
-            InventoryLog::create([
-                'menu_item_id'     => $menuItem->id,
-                'action'           => 'order',
-                'quantity_changed' => -$quantity,
+                'menu_item_id' => $row['menu_item_id'],
+                'quantity'     => $row['quantity'],
             ]);
         }
 
-        return Inertia::render('Orders/Receipt', [
-            'order' => $order->load('orderItems.menuItem', 'user'),
-        ]);
+        return redirect()->route('orders.index')->with('success', 'Order created.');
     }
 
+    // EDIT
     public function edit(Order $order)
     {
         $order->load('orderItems.menuItem', 'user');
-        $menuItems = MenuItem::select('id','name','price','stock')->orderBy('name')->get();
+
+        $menuItems = MenuItem::select('id','name','price','stock')
+            ->orderBy('name')->get();
 
         return Inertia::render('Orders/Edit', [
             'order'     => $order,
@@ -88,23 +101,28 @@ class OrderController extends Controller
         ]);
     }
 
+    // UPDATE (status / payment flags)
     public function update(Request $request, Order $order)
     {
         $validated = $request->validate([
-            'status'         => 'required|in:pending,preparing,ready,picked_up,cancelled',
+            'status'         => 'nullable|in:pending,preparing,ready,picked_up,cancelled',
             'payment_method' => 'nullable|in:cash,qr',
             'is_paid'        => 'nullable|boolean',
         ]);
 
-        $order->update([
-            'status'         => $validated['status'],
-            'payment_method' => $validated['payment_method'] ?? $order->payment_method,
-            'is_paid'        => array_key_exists('is_paid', $validated) ? (bool)$validated['is_paid'] : $order->is_paid,
-        ]);
+        $payload = [];
+        if (array_key_exists('status', $validated))         $payload['status'] = $validated['status'];
+        if (array_key_exists('payment_method', $validated)) $payload['payment_method'] = $validated['payment_method'];
+        if (array_key_exists('is_paid', $validated))        $payload['is_paid'] = (bool) $validated['is_paid'];
+
+        if (!empty($payload)) {
+            $order->update($payload);
+        }
 
         return redirect()->route('orders.index')->with('success', 'Order updated.');
     }
 
+    // DESTROY
     public function destroy(Order $order)
     {
         $order->orderItems()->delete();
@@ -113,95 +131,70 @@ class OrderController extends Controller
         return redirect()->route('orders.index')->with('success', 'Order deleted.');
     }
 
-    /**
-     * Payments & Receipts dashboard
-     */
+    // PAYMENTS / RECEIPTS PAGE
     public function receiptsAndPayments()
     {
-        $orders = Order::with(['user', 'orderItems.menuItem'])->latest()->get();
-
-        // Map to a simple array with a computed total
-        $data = $orders->map(function (Order $o) {
-            $total = $o->orderItems->sum(function ($i) {
-                $price = optional($i->menuItem)->price ?? 0;
-                return $i->quantity * $price;
+        // Orders + computed total_amount per order
+        $orders = Order::with('user:id,name,email')
+            ->select('id', 'user_id', 'status', 'payment_method', 'is_paid', 'created_at')
+            ->addSelect([
+                'total_amount' => DB::table('order_items')
+                    ->join('menu_items', 'menu_items.id', '=', 'order_items.menu_item_id')
+                    ->whereColumn('order_items.order_id', 'orders.id')
+                    ->selectRaw('COALESCE(SUM(order_items.quantity * menu_items.price), 0)')
+            ])
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->map(function ($o) {
+                $o->total_amount = (float) $o->total_amount;
+                return $o;
             });
 
-            return [
-                'id'        => $o->id,
-                'customer'  => optional($o->user)->name,
-                'status'    => $o->status,
-                'method'    => $o->payment_method,
-                'is_paid'   => (bool) $o->is_paid,
-                'total'     => round($total, 2),
-                'created_at'=> $o->created_at?->toDateTimeString(),
-            ];
-        });
+        // Totals by method (computed from the collection)
+        $cashTotal = (float) $orders->where('payment_method', 'cash')->sum('total_amount');
+        $qrTotal   = (float) $orders->where('payment_method', 'qr')->sum('total_amount');
 
-        $summary = [
-            'count'   => $data->count(),
-            'cash'    => $data->where('method', 'cash')->sum('total'),
-            'qr'      => $data->where('method', 'qr')->sum('total'),
-            'paid'    => $data->where('is_paid', true)->sum('total'),
-            'unpaid'  => $data->where('is_paid', false)->sum('total'),
-        ];
-
-        $qrSetting = Setting::where('key', 'qr_code_path')->first();
-        $qrUrl = $qrSetting && $qrSetting->value
-            ? Storage::disk('public')->url($qrSetting->value)
+        // Public URL for the current QR image (public/storage/qr/current.png)
+        $qrUrl = Storage::disk('public')->exists('qr/current.png')
+            ? asset('storage/qr/current.png')
             : null;
 
         return Inertia::render('Orders/PaymentsReceipts', [
-            'orders'  => $data,
-            'summary' => $summary,
-            'qrUrl'   => $qrUrl,
+            'orders'         => $orders,
+            'totals'         => [
+                'cash_total' => $cashTotal,
+                'qr_total'   => $qrTotal,
+            ],
+            'qr_public_path' => $qrUrl, // matches your React page
         ]);
     }
 
-    /**
-     * Update payment method for an order (cash or qr)
-     */
+    // Payment helper routes
     public function updatePaymentMethod(Request $request, Order $order)
     {
-        $request->validate([
-            'method' => 'required|in:cash,qr',
-        ]);
+        $data = $request->validate(['payment_method' => 'required|in:cash,qr']);
+        $order->update(['payment_method' => $data['payment_method']]);
 
-        $order->update(['payment_method' => $request->method]);
-
-        return back();
+        return back()->with('success', 'Payment method updated.');
     }
 
-    /**
-     * Mark order as paid / unpaid
-     */
     public function markPaid(Request $request, Order $order)
     {
-        $request->validate([
-            'is_paid' => 'required|boolean',
-        ]);
+        $data = $request->validate(['is_paid' => 'required|boolean']);
+        $order->update(['is_paid' => (bool) $data['is_paid']]);
 
-        $order->update(['is_paid' => (bool)$request->is_paid]);
-
-        return back();
+        return back()->with('success', 'Order payment status updated.');
     }
 
-    /**
-     * Upload QR code image (stored in settings)
-     */
+    // QR upload (stores to storage/app/public/qr/current.png)
     public function uploadQr(Request $request)
     {
         $request->validate([
             'qr' => 'required|image|mimes:png,jpg,jpeg,webp|max:4096',
         ]);
 
-        $path = $request->file('qr')->store('qr_codes', 'public');
+        $request->file('qr')->storeAs('qr', 'current.png', 'public');
 
-        Setting::updateOrCreate(
-            ['key' => 'qr_code_path'],
-            ['value' => $path]
-        );
-
-        return back();
+        return back()->with('success', 'QR image updated.');
     }
 }

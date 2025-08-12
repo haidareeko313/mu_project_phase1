@@ -2,40 +2,30 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\Storage;
 
 class MenuItem extends Model
 {
-    use HasFactory;
+    protected $fillable = ['name','description','price','stock','image'];
 
-    protected $fillable = [
-        'name',
-        'description',
-        'price',
-        'stock',
-        'image',
-    ];
-
-    // Always include image_url when the model is serialized to JSON
+    // 👇 ensures image_url is included in JSON sent to Inertia
     protected $appends = ['image_url'];
 
-    /**
-     * Accessor: image_url
-     * Returns a full URL (e.g. /storage/menu_images/abc.jpg) or a placeholder if missing.
-     */
     public function getImageUrlAttribute(): string
     {
-        if ($this->image) {
-            // Storage::url('menu_images/abc.jpg') => '/storage/menu_images/abc.jpg'
-            return Storage::url($this->image);
+        // Fallback
+        if (empty($this->image)) {
+            return asset('images/placeholder.png');
         }
 
-        // Put a placeholder image at public/images/placeholder.png (or change this path)
-        return asset('images/placeholder.png');
-    }
+        // If you ever save full URLs, just return them
+        if (preg_match('~^https?://~i', $this->image)) {
+            return $this->image;
+        }
 
-    // (Keep your relationships here if you have them)
-    // public function orderItems(){ ... }
+        // Strip possible "public/" and point to /storage/...
+        $clean = preg_replace('~^public/~', '', $this->image);
+
+        return asset('storage/'.ltrim($clean, '/'));
+    }
 }

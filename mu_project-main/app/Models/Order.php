@@ -2,11 +2,8 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-use App\Models\User;
-use App\Models\OrderItem;
-use App\Models\Payment;
+use Illuminate\Database\Eloquent\Model;
 
 class Order extends Model
 {
@@ -14,30 +11,25 @@ class Order extends Model
 
     protected $fillable = [
         'user_id',
-        'status',
+        'status',           // e.g. pending, preparing, ready, picked_up, cancelled
+        'payment_method',   // 'cash' | 'qr'
+        'is_paid',          // boolean
     ];
 
-    /**
-     * Each order belongs to a user.
-     */
+    protected $casts = [
+        'is_paid' => 'boolean',
+    ];
+
+    // The user who placed the order
     public function user()
     {
         return $this->belongsTo(User::class);
     }
 
-    /**
-     * An order has many order items.
-     */
+    // Line items on this order
     public function orderItems()
     {
-        return $this->hasMany(OrderItem::class);
+        return $this->hasMany(\App\Models\OrderItem::class);
     }
 
-    /**
-     * An order has one payment.
-     */
-    public function payment()
-    {
-        return $this->hasOne(Payment::class);
-    }
 }

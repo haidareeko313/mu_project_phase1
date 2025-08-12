@@ -2,7 +2,15 @@ import React from "react";
 import { Link, usePage } from "@inertiajs/react";
 import AuthenticatedLayout from "@/Layouts/AuthenticatedLayout";
 
-export default function Index({ menuItems }) {
+// Turn a stored path like "menu_images/abc.jpg" or "public/menu_images/abc.jpg"
+// into a public URL like "/storage/menu_images/abc.jpg"
+const storageUrl = (path) => {
+  if (!path) return "/images/placeholder.png";
+  const clean = String(path).replace(/^public\//, "");
+  return `/storage/${clean}`;
+};
+
+export default function Index({ menuItems = [] }) {
   const { flash } = usePage().props;
 
   return (
@@ -37,37 +45,44 @@ export default function Index({ menuItems }) {
               </tr>
             </thead>
             <tbody>
-              {menuItems.map((mi) => (
-                <tr key={mi.id} className="border-t">
-                  <td className="px-4 py-3">
-                    <img
-                      src={mi.image_url}
-                      alt={mi.name}
-                      className="h-12 w-12 rounded object-cover"
-                      loading="lazy"
-                    />
-                  </td>
-                  <td className="px-4 py-3">{mi.name}</td>
-                  <td className="px-4 py-3">${Number(mi.price).toFixed(2)}</td>
-                  <td className="px-4 py-3">{mi.stock}</td>
-                  <td className="px-4 py-3 space-x-3">
-                    <Link
-                      href={route("menu-items.edit", mi.id)}
-                      className="text-indigo-600 hover:underline"
-                    >
-                      Edit
-                    </Link>
-                    <Link
-                      as="button"
-                      method="delete"
-                      href={route("menu-items.destroy", mi.id)}
-                      className="text-red-600 hover:underline"
-                    >
-                      Delete
-                    </Link>
-                  </td>
-                </tr>
-              ))}
+              {menuItems.map((mi) => {
+                // Prefer an explicit image_url if your controller provides it;
+                // otherwise resolve from the stored "image" column.
+                const imgSrc = mi.image_url ?? storageUrl(mi.image);
+
+                return (
+                  <tr key={mi.id} className="border-t">
+                      <td className="px-4 py-3">
+                        <img
+                          src={mi.image_url}
+                          alt={mi.name}
+                          className="h-12 w-12 rounded object-cover"
+                          onError={(e) => { e.currentTarget.src = '/images/placeholder.png'; }}
+                        />
+                      </td>
+
+                    <td className="px-4 py-3">{mi.name}</td>
+                    <td className="px-4 py-3">${Number(mi.price).toFixed(2)}</td>
+                    <td className="px-4 py-3">{mi.stock}</td>
+                    <td className="px-4 py-3 space-x-3">
+                      <Link
+                        href={route("menu-items.edit", mi.id)}
+                        className="text-indigo-600 hover:underline"
+                      >
+                        Edit
+                      </Link>
+                      <Link
+                        as="button"
+                        method="delete"
+                        href={route("menu-items.destroy", mi.id)}
+                        className="text-red-600 hover:underline"
+                      >
+                        Delete
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })}
 
               {menuItems.length === 0 && (
                 <tr>
