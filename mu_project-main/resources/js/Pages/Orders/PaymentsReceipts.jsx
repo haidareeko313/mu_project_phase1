@@ -14,30 +14,25 @@ const FALLBACK_SVG =
      </svg>`
   );
 
-function withVersion(url, v = Date.now()) {
-  if (!url) return null;
-  return url.includes("?") ? `${url}&v=${v}` : `${url}?v=${v}`;
-}
-
 export default function PaymentsReceipts() {
-  // Props expected from controller
+  // Props from controller:
+  // - orders: [{ id, user, payment_method, is_paid, created_at, total_amount }]
+  // - totals: { cash_total, qr_total }
+  // - qr_public_path: string | null
   const { orders = [], totals = {}, qr_public_path = null } = usePage().props;
 
   const cashTotal = Number(totals?.cash_total ?? 0);
-  const qrTotal = Number(totals?.qr_total ?? 0);
+  const qrTotal   = Number(totals?.qr_total ?? 0);
 
-  // image src state with cache-busting
-  const [qrSrc, setQrSrc] = React.useState(
-    qr_public_path ? withVersion(qr_public_path) : null
+  const sumPaid   = (orders || []).reduce(
+    (s, o) => s + (o.is_paid ? Number(o.total_amount ?? o.total ?? 0) : 0),
+    0
   );
-
-  // if the server sends a new path later (partial reload), sync it
-  React.useEffect(() => {
-    setQrSrc(qr_public_path ? withVersion(qr_public_path) : null);
-  }, [qr_public_path]);
-
-  const sumTotal = (arr) =>
-    arr.reduce((s, o) => s + Number(o.total ?? o.total_amount ?? 0), 0);
+  const sumTotal  = (orders || []).reduce(
+    (s, o) => s + Number(o.total_amount ?? o.total ?? 0),
+    0
+  );
+  const sumUnpaid = Math.max(0, sumTotal - sumPaid); // what the Dashboard shows
 
   const onChangeMethod = (id, value) => {
     router.patch(
@@ -58,35 +53,21 @@ export default function PaymentsReceipts() {
   const onUploadQr = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    // 1) instant local preview
-    const localPreview = URL.createObjectURL(file);
-    setQrSrc(localPreview);
-
-    // 2) upload
     const form = new FormData();
     form.append("qr", file);
-
     router.post(route("payments.qr_upload"), form, {
       forceFormData: true,
       preserveScroll: true,
-      // 3) after upload, fetch only the new qr path and bust cache
       onSuccess: () => {
-        router.reload({
-          only: ["qr_public_path"],
-          onSuccess: (page) => {
-            const path = page.props.qr_public_path;
-            setQrSrc(path ? withVersion(path) : null);
-          },
-          onError: () => {
-            // fallback to server path if something goes wrong
-            setQrSrc(qr_public_path ? withVersion(qr_public_path) : null);
-          },
-        });
-      },
-      onError: () => {
-        // revert preview on error
-        setQrSrc(qr_public_path ? withVersion(qr_public_path) : null);
+        // Force the <img> to re-fetch the latest QR without hard refresh
+        if (typeof window !== "undefined") {
+          const img = document.getElementById("qr-preview-img");
+          if (img && img.src) {
+            const u = new URL(img.src, window.location.origin);
+            u.searchParams.set("_ts", Date.now().toString());
+            img.src = u.toString();
+          }
+        }
       },
     });
   };
@@ -117,7 +98,7 @@ export default function PaymentsReceipts() {
         <div className="rounded-lg border bg-white p-4">
           <div className="text-sm text-gray-500">Paid / Unpaid</div>
           <div className="mt-2 text-2xl font-semibold">
-            ${sumTotal(orders.filter((o) => !!o.is_paid)).toFixed(2)} / ${sumTotal(orders).toFixed(2)}
+            ${sumPaid.toFixed(2)} / ${sumUnpaid.toFixed(2)}
           </div>
         </div>
       </div>
@@ -135,10 +116,10 @@ export default function PaymentsReceipts() {
         <div className="rounded-lg border bg-white p-4">
           <div className="text-sm font-medium text-gray-700 mb-2">Current QR</div>
           <div className="h-64 rounded border flex items-center justify-center bg-gray-50 p-2">
-            {qrSrc ? (
+            {qr_public_path ? (
               <img
-                key={qrSrc} // helps React swap the image cleanly
-                src={qrSrc}
+                id="qr-preview-img"
+                src={qr_public_path}
                 alt="QR"
                 className="max-h-full max-w-full object-contain"
                 onError={(e) => { e.currentTarget.src = FALLBACK_SVG; }}
@@ -163,6 +144,7 @@ export default function PaymentsReceipts() {
               <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Created</th>
             </tr>
           </thead>
+
           <tbody className="divide-y divide-gray-100">
             {orders.length === 0 && (
               <tr>
@@ -171,8 +153,9 @@ export default function PaymentsReceipts() {
                 </td>
               </tr>
             )}
+
             {orders.map((o) => {
-              const total = Number(o.total ?? o.total_amount ?? 0);
+              const total = Number(o.total_amount ?? o.total ?? 0);
               return (
                 <tr key={o.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3">

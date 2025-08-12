@@ -17,18 +17,6 @@ class Payment extends Model
         'method',
         'amount',
     ];
-// app/Http/Controllers/OrderController.php
-public function receiptsAndPayments()
-{
-    // Provide minimal props so the page renders
-    $data = [
-        'cashTotal' => 0,
-        'qrTotal'   => 0,
-        'orders'    => [],
-    ];
-
-    return \Inertia\Inertia::render('Orders/ReceiptsPayments', $data);
-}
 
     /**
      * Each payment belongs to one order.
