@@ -1,9 +1,113 @@
-/* resources/css/app.css */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* (optional) small sanity styles */
-html, body, #app {
-  height: 100%;
+/* Base – switch typography/colors on dark */
+@layer base {
+  html.dark body {
+    @apply bg-fx-canvas text-fx-text;
+  }
+}
+
+/* Components */
+@layer components {
+  /* FoodX card */
+  .fx-card {
+    @apply rounded-card border bg-white shadow-sm p-4 transition-colors;
+    @apply border-slate-200;
+  }
+  html.dark .fx-card {
+    @apply bg-fx-surface border-fx-line text-fx-text shadow-fx;
+  }
+
+  .fx-section-title {
+    @apply text-lg font-semibold;
+  }
+  html.dark .fx-section-title { @apply text-black; } /* changed to black */
+
+  .fx-kpi {
+    @apply fx-card flex flex-col gap-1;
+  }
+  .fx-kpi .fx-kpi-label { @apply text-sm text-slate-500; }
+  html.dark .fx-kpi .fx-kpi-label { @apply text-black; } /* changed */
+  .fx-kpi .fx-kpi-value { @apply text-black; }
+  html.dark .fx-kpi .fx-kpi-value { @apply text-black; } /* force black */
+
+  /* Buttons */
+  .fx-btn {
+    @apply inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors;
+  }
+  .fx-btn-primary {
+    @apply fx-btn text-white bg-fx-primary hover:brightness-110;
+  }
+  .fx-chip {
+    @apply inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium;
+    @apply bg-slate-100 text-slate-700;
+  }
+  html.dark .fx-chip {
+    @apply bg-fx-chip text-black; /* changed */
+  }
+
+  /* Inputs */
+  .fx-input {
+    @apply rounded-md border bg-white px-3 py-2 text-sm;
+    @apply border-slate-300;
+  }
+  html.dark .fx-input {
+    @apply bg-fx-surface border-fx-line text-black placeholder:text-black; /* changed */
+  }
+
+  /* Tables */
+  .fx-table-wrapper { @apply overflow-hidden rounded-card border; }
+  html.dark .fx-table-wrapper { @apply border-fx-line; }
+  .fx-table { @apply min-w-full text-sm; }
+  .fx-thead { @apply bg-slate-50 text-left; }
+  html.dark .fx-thead { @apply bg-[#0f1830]; }
+  .fx-th { @apply px-4 py-3 font-semibold text-slate-700; }
+  html.dark .fx-th { @apply text-black; } 
+  .fx-td { @apply px-4 py-3 text-slate-700; }
+  html.dark .fx-td { @apply text-black; } 
+  .fx-tr { @apply border-t; }
+  html.dark .fx-tr { @apply border-fx-line; }
+  .fx-tr:hover { @apply bg-slate-50; }
+  html.dark .fx-tr:hover { @apply bg-[#142040]; }
+}
+/* -------------------------------------------
+   Dark-mode hard overrides for gray utilities
+   Put these AT THE VERY END of app.css
+   ------------------------------------------- */
+
+/* Tailwind gray/slate utilities that make text look dim.
+   We forcibly map them to black when dark mode is active. */
+html.dark .text-slate-400,
+html.dark .text-slate-500,
+html.dark .text-slate-600,
+html.dark .text-slate-700,
+html.dark .text-gray-400,
+html.dark .text-gray-500,
+html.dark .text-gray-600,
+html.dark .text-gray-700 {
+  color: #000 !important; /* force solid black */
+}
+
+/* Table headers/cells and common labels */
+html.dark th,
+html.dark td,
+html.dark label,
+html.dark .form-label {
+  color: #000 !important;
+}
+
+/* KPI bits just to be extra safe */
+html.dark .fx-kpi .fx-kpi-label,
+html.dark .fx-kpi .fx-kpi-value,
+html.dark .fx-section-title {
+  color: #000 !important;
+}
+
+/* Inputs placeholders in dark mode */
+html.dark input::placeholder,
+html.dark textarea::placeholder {
+  color: #000 !important;
+  opacity: 1 !important;
 }

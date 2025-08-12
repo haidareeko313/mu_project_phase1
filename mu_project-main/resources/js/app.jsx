@@ -1,3 +1,9 @@
+// Keep user’s last choice
+const saved = typeof window !== 'undefined' ? localStorage.getItem('fx-theme') : null;
+if (saved === 'dark' || (!saved && window.matchMedia?.('(prefers-color-scheme: dark)').matches)) {
+  document.documentElement.classList.add('dark');
+}
+
 import '../css/app.css';
 import React from 'react';
 import { createInertiaApp } from '@inertiajs/react';
