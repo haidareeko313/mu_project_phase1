@@ -11,8 +11,10 @@ Route::redirect('/', '/cafeteria');
 
 Route::middleware(['auth', 'verified'])->group(function () {
 
+    // Dashboard
     Route::get('/cafeteria', [CafeteriaController::class, 'index'])->name('cafeteria');
 
+    // Menu Items & Orders
     Route::resource('menu-items', MenuItemController::class)->except(['show']);
     Route::resource('orders', OrderController::class)->except(['show']);
 
@@ -34,6 +36,12 @@ Route::middleware(['auth', 'verified'])->group(function () {
     // QR upload
     Route::post('/payments/qr-upload', [OrderController::class, 'uploadQr'])
         ->name('payments.qr_upload');
+
+    // ✅ Profile (needed by route('profile.edit') etc.)
+    Route::get('/profile',  [ProfileController::class, 'edit'])->name('profile.edit');
+    Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
+    Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 });
 
+// Breeze/Jetstream auth scaffolding (login, register, password, etc.)
 require __DIR__.'/auth.php';

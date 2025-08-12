@@ -6,9 +6,12 @@
     <meta name="csrf-token" content="{{ csrf_token() }}" />
     <title inertia>{{ config('app.name', 'Laravel') }}</title>
 
+    {{-- Ziggy routes for route() in React --}}
     @routes
+
+    {{-- Vite / Inertia --}}
     @viteReactRefresh
-    @vite(['resources/js/app.jsx'])   {{-- CSS is imported inside app.jsx --}}
+    @vite(['resources/js/app.jsx']) {{-- CSS can be imported from app.jsx --}}
     @inertiaHead
   </head>
   <body class="antialiased">
