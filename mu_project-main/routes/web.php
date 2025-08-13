@@ -45,5 +45,3 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
 // Breeze/Jetstream auth scaffolding (includes POST /logout)
 require __DIR__.'/auth.php';
-
-// IMPORTANT: Do NOT create a GET /logout route anywhere.
