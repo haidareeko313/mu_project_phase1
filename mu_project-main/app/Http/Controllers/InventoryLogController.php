@@ -11,7 +11,7 @@ class InventoryLogController extends Controller
     public function index(Request $request)
     {
         $search   = (string) $request->query('search', '');
-        $reason   = (string) $request->query('reason', '');  // UI “reason” → DB “action”
+        $reason   = (string) $request->query('reason', '');  
         $from     = $request->query('from');
         $to       = $request->query('to');
         $perPage  = (int) $request->query('per_page', 25);

@@ -10,11 +10,7 @@ use Inertia\Inertia;
 
 class CafeteriaController extends Controller
 {
-    /**
-     * Admin dashboard.
-     *
-     * Route: GET /cafeteria  (name: cafeteria)
-     */
+   
     public function index()
     {
         // ---- Orders count ----------------------------------------------------
@@ -47,7 +43,7 @@ class CafeteriaController extends Controller
         $paidTotal   = (float) ($paidUnpaid->paid_total   ?? 0);
         $grandTotal  = (float) ($paidUnpaid->grand_total  ?? 0);
 
-        // ---- Low stock counter (example: stock <= 5) -------------------------
+        // ---- Low stock counter ( stock <= 5) -------------------------
         $lowStockCount = MenuItem::where('stock', '<=', 5)->count();
 
         // ---- Menu items to show on dashboard --------------------------------

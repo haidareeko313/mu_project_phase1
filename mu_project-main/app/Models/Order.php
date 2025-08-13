@@ -11,7 +11,7 @@ class Order extends Model
 
     protected $fillable = [
         'user_id',
-        'status',           // e.g. pending, preparing, ready, picked_up, cancelled
+        'status',           //  pending, preparing, ready, picked_up, cancelled
         'payment_method',   // 'cash' | 'qr'
         'is_paid',          // boolean
     ];

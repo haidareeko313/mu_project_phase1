@@ -7,7 +7,7 @@ return new class extends Migration
 {
     public function up(): void
     {
-        // Adjust the list to the final set you want to allow
+        
         DB::statement("
             ALTER TABLE orders
             MODIFY COLUMN status
@@ -18,8 +18,7 @@ return new class extends Migration
 
     public function down(): void
     {
-        // If you want a reversible down(), put your previous enum here.
-        // Example (guessing old set):
+        
         DB::statement("
             ALTER TABLE orders
             MODIFY COLUMN status
