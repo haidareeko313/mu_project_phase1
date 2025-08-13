@@ -1,23 +1,25 @@
-// Keep user’s last choice
-const saved = typeof window !== 'undefined' ? localStorage.getItem('fx-theme') : null;
-if (saved === 'dark' || (!saved && window.matchMedia?.('(prefers-color-scheme: dark)').matches)) {
-  document.documentElement.classList.add('dark');
-}
-
+import './bootstrap';
 import '../css/app.css';
+
 import React from 'react';
+import ReactDOM from 'react-dom/client';
 import { createInertiaApp } from '@inertiajs/react';
-import { createRoot } from 'react-dom/client';
+import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
+
+const appName = import.meta.env.VITE_APP_NAME || 'Laravel';
+
+// Force dark mode class on <html>
+document.documentElement.classList.add('dark');
 
 createInertiaApp({
-  resolve: (name) => {
-    const pages = import.meta.glob('./Pages/**/*.jsx', { eager: true });
-    const page = pages[`./Pages/${name}.jsx`];
-    if (!page) throw new Error(`Page not found: ./Pages/${name}.jsx`);
-    return page;
-  },
+  title: (title) => `${title} - ${appName}`,
+  resolve: (name) =>
+    resolvePageComponent(
+      `./Pages/${name}.jsx`,
+      import.meta.glob('./Pages/**/*.jsx')
+    ),
   setup({ el, App, props }) {
-    createRoot(el).render(<App {...props} />);
+    ReactDOM.createRoot(el).render(<App {...props} />);
   },
   progress: { color: '#4B5563' },
 });

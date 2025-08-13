@@ -1,52 +1,115 @@
-import React from 'react';
-import { Link, usePage } from '@inertiajs/react';
-import ThemeToggle from '@/Components/ThemeToggle';
+import React from "react";
+import { Link, usePage, router, Head } from "@inertiajs/react";
+import NavLink from "@/Components/NavLink";
 
+/**
+ * App shell with a fixed left sidebar + top bar in the content area.
+ * - Sidebar: links to main sections
+ * - Top bar: current page header + profile + POST logout button
+ * - Content: render children
+ *
+ * Dark, clean, and readable.
+ */
 export default function AuthenticatedLayout({ header, children }) {
-  const { auth, ziggy } = usePage().props;
+  const { auth } = usePage().props;
+
+  // Helper to check "active" routes; accepts string or array of names
+  const is = (names) => {
+    if (Array.isArray(names)) return names.some((n) => route().current(n));
+    return route().current(names);
+  };
 
   return (
-    <div className="min-h-screen flex bg-white dark:bg-fx-canvas">
-      {/* Sidebar */}
-      <aside className="hidden md:flex w-60 flex-col border-r dark:border-fx-line bg-white dark:bg-fx-surface">
-        <div className="h-16 flex items-center px-4 border-b dark:border-fx-line">
-          <Link href={route('cafeteria')} className="flex items-center gap-2">
-            <span className="text-xl font-semibold dark:text-white">Cafetería</span>
+    <div className="min-h-screen bg-[#0c1222] text-slate-100">
+      <Head />
+
+      {/* --- Fixed Left Sidebar --- */}
+      <aside className="fixed inset-y-0 left-0 z-30 w-60 border-r border-white/10 bg-[#0e1528]">
+        <div className="flex h-14 items-center px-4 border-b border-white/10">
+          <Link
+            href={route("cafeteria")}
+            className="text-lg font-semibold tracking-wide text-indigo-300"
+          >
+            Cafetería
           </Link>
         </div>
 
-        <nav className="p-3 space-y-1 text-sm">
-          <Link href={route('cafeteria')} className="block px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-[#142040] text-slate-700 dark:text-fx-text">Dashboard</Link>
-          <Link href={route('orders.index')} className="block px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-[#142040] text-slate-700 dark:text-fx-text">Orders</Link>
-          <Link href={route('menu-items.index')} className="block px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-[#142040] text-slate-700 dark:text-fx-text">Menu Items</Link>
-          <Link href={route('inventory.index')} className="block px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-[#142040] text-slate-700 dark:text-fx-text">Inventory Logs</Link>
-          <Link href={route('orders.receipts_payments')} className="block px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-[#142040] text-slate-700 dark:text-fx-text">Payments</Link>
+        <nav className="px-3 py-3 space-y-1">
+          <NavLink
+            href={route("cafeteria")}
+            active={is("cafeteria")}
+            icon="🏠"
+          >
+            Dashboard
+          </NavLink>
+
+          <NavLink
+            href={route("orders.index")}
+            active={is(["orders.index", "orders.create", "orders.edit"])}
+            icon="📦"
+          >
+            Orders
+          </NavLink>
+
+          <NavLink
+            href={route("menu-items.index")}
+            active={is(["menu-items.index", "menu-items.create", "menu-items.edit"])}
+            icon="🍽️"
+          >
+            Menu Items
+          </NavLink>
+
+          <NavLink
+            href={route("inventory.index")}
+            active={is("inventory.index")}
+            icon="📦"
+          >
+            Inventory Logs
+          </NavLink>
+
+          <NavLink
+            href={route("orders.receipts_payments")}
+            active={is("orders.receipts_payments")}
+            icon="💳"
+          >
+            Payments
+          </NavLink>
         </nav>
       </aside>
 
-      {/* Main */}
-      <div className="flex-1 min-w-0">
-        {/* Top bar */}
-        <header className="h-16 border-b dark:border-fx-line bg-white/70 dark:bg-fx-surface/70 backdrop-blur supports-[backdrop-filter]:bg-white/50 dark:supports-[backdrop-filter]:bg-fx-surface/50">
-          <div className="h-full max-w-7xl mx-auto px-4 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <ThemeToggle />
-              {header && <div className="fx-section-title">{header}</div>}
+      {/* --- Main Content area (with left padding equal to sidebar width) --- */}
+      <div className="pl-60">
+        {/* Top bar inside content area */}
+        <header className="sticky top-0 z-20 h-14 border-b border-white/10 bg-[#0e1528]/80 backdrop-blur">
+          <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+            <div className="text-sm opacity-80">
+              {header ?? "Admin Dashboard"}
             </div>
 
-            {/* Profile */}
             <div className="flex items-center gap-2">
-              {/* If you kept Breeze profile routes, they’re available */}
-              <Link href={route('profile.edit')} className="fx-chip">{auth?.user?.name ?? 'Account'}</Link>
-              <form method="post" action={route('logout')}>
-                <input type="hidden" name="_token" value={usePage().props.csrf_token} />
-                <button className="fx-btn">Logout</button>
-              </form>
+              {/* Profile link */}
+              <Link
+                href={route("profile.edit")}
+                className="rounded-md border border-white/15 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/5"
+              >
+                {auth?.user?.name ?? "Profile"}
+              </Link>
+
+              {/* POST logout (no 419s) */}
+              <Link
+                href={route("logout")}
+                method="post"
+                as="button"
+                className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
+              >
+                Logout
+              </Link>
             </div>
           </div>
         </header>
 
-        <main className="max-w-7xl mx-auto px-4 py-6">
+        {/* Page content */}
+        <main className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
           {children}
         </main>
       </div>

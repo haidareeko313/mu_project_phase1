@@ -12,7 +12,7 @@ use Inertia\Inertia;
 
 class OrderController extends Controller
 {
-    // ====== LIST ORDERS (unchanged example) =================================
+    // ====== LIST ORDERS ======================================================
     public function index()
     {
         $orders = Order::with(['user', 'orderItems.menuItem'])
@@ -47,14 +47,39 @@ class OrderController extends Controller
         ]);
     }
 
-    // ====== CREATE / STORE (your existing code if any) =======================
+    // ====== UPDATE (resource route: PATCH /orders/{order}) ===================
+    public function update(Request $request, Order $order)
+    {
+        // Accept any combination of these fields
+        $data = $request->validate([
+            'status'         => 'nullable|in:pending,preparing,ready,picked_up,cancelled',
+            'payment_method' => 'nullable|in:cash,qr',
+            'is_paid'        => 'nullable|boolean',
+        ]);
 
-    // ====== EDIT / UPDATE / DESTROY (your existing code if any) =============
+        $payload = [];
+
+        if (array_key_exists('status', $data)) {
+            $payload['status'] = $data['status'];
+        }
+        if (array_key_exists('payment_method', $data)) {
+            $payload['payment_method'] = $data['payment_method'];
+        }
+        if (array_key_exists('is_paid', $data)) {
+            $payload['is_paid'] = (bool) $data['is_paid'];
+        }
+
+        if (!empty($payload)) {
+            $order->update($payload);
+        }
+
+        return back()->with('success', 'Order updated.');
+    }
 
     // ====== PAYMENTS / RECEIPTS PAGE ========================================
     public function receiptsAndPayments()
     {
-        // ---- List of orders with computed total_amount per order ------------
+        // Orders with computed total_amount per order
         $orders = Order::with('user:id,name,email')
             ->select('id', 'user_id', 'status', 'payment_method', 'is_paid', 'created_at')
             ->addSelect([
@@ -70,7 +95,7 @@ class OrderController extends Controller
                 return $o;
             });
 
-        // ---- Totals by payment method (MATCHES DASHBOARD SQL) ----------------
+        // Totals by payment method (same logic used on dashboard)
         $totalsRow = DB::table('order_items')
             ->join('orders', 'orders.id', '=', 'order_items.order_id')
             ->join('menu_items', 'menu_items.id', '=', 'order_items.menu_item_id')
@@ -83,7 +108,7 @@ class OrderController extends Controller
         $cashTotal = (float) ($totalsRow->cash_total ?? 0);
         $qrTotal   = (float) ($totalsRow->qr_total   ?? 0);
 
-        // ---- Current QR image URL (public/storage/qr/current.png) -----------
+        // Current QR image URL (public/storage/qr/current.png)
         $qrUrl = Storage::disk('public')->exists('qr/current.png')
             ? asset('storage/qr/current.png')
             : null;
@@ -98,7 +123,7 @@ class OrderController extends Controller
         ]);
     }
 
-    // ====== Actions triggered from the Payments page ========================
+    // ====== Actions triggered from the Payments page =========================
     public function updatePaymentMethod(Request $request, Order $order)
     {
         $data = $request->validate(['payment_method' => 'required|in:cash,qr']);

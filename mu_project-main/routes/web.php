@@ -9,14 +9,14 @@ use App\Http\Controllers\ProfileController;
 
 Route::redirect('/', '/cafeteria');
 
+// Everything below requires login + verified email
 Route::middleware(['auth', 'verified'])->group(function () {
-
     // Dashboard
     Route::get('/cafeteria', [CafeteriaController::class, 'index'])->name('cafeteria');
 
     // Menu Items & Orders
     Route::resource('menu-items', MenuItemController::class)->except(['show']);
-    Route::resource('orders', OrderController::class)->except(['show']);
+    Route::resource('orders', OrderController::class)->except(['show']); // ->update will be used
 
     // Inventory logs
     Route::get('/inventory-logs', [InventoryLogController::class, 'index'])->name('inventory.index');
@@ -26,7 +26,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/payments-receipts', [OrderController::class, 'receiptsAndPayments'])
         ->name('orders.receipts_payments');
 
-    // Payment row actions
+    // Row actions (still available if you use them)
     Route::patch('/orders/{order}/payment-method', [OrderController::class, 'updatePaymentMethod'])
         ->name('orders.update_method');
 
@@ -37,11 +37,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('/payments/qr-upload', [OrderController::class, 'uploadQr'])
         ->name('payments.qr_upload');
 
-    // ✅ Profile (needed by route('profile.edit') etc.)
+    // Profile (Ziggy helpers like route('profile.edit') need these)
     Route::get('/profile',  [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 });
 
-// Breeze/Jetstream auth scaffolding (login, register, password, etc.)
+// Breeze/Jetstream auth scaffolding (includes POST /logout)
 require __DIR__.'/auth.php';
+
+// IMPORTANT: Do NOT create a GET /logout route anywhere.

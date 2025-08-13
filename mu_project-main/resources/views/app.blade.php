@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="{{ str_replace('_','-', app()->getLocale()) }}">
+<html class="dark" lang="{{ str_replace('_','-', app()->getLocale()) }}">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -11,7 +11,7 @@
 
     {{-- Vite / Inertia --}}
     @viteReactRefresh
-    @vite(['resources/js/app.jsx']) {{-- CSS can be imported from app.jsx --}}
+    @vite(['resources/js/app.jsx']) {{-- CSS is imported by app.jsx --}}
     @inertiaHead
   </head>
   <body class="antialiased">
