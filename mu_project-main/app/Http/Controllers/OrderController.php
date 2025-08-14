@@ -50,7 +50,6 @@ class OrderController extends Controller
     // ====== UPDATE (resource route: PATCH /orders/{order}) ===================
     public function update(Request $request, Order $order)
     {
-        // Accept any combination of these fields
         $data = $request->validate([
             'status'         => 'nullable|in:pending,preparing,ready,picked_up,cancelled',
             'payment_method' => 'nullable|in:cash,qr',
@@ -58,28 +57,32 @@ class OrderController extends Controller
         ]);
 
         $payload = [];
+        if (array_key_exists('status', $data))         $payload['status']         = $data['status'];
+        if (array_key_exists('payment_method', $data)) $payload['payment_method'] = $data['payment_method'];
+        if (array_key_exists('is_paid', $data))        $payload['is_paid']        = (bool) $data['is_paid'];
 
-        if (array_key_exists('status', $data)) {
-            $payload['status'] = $data['status'];
-        }
-        if (array_key_exists('payment_method', $data)) {
-            $payload['payment_method'] = $data['payment_method'];
-        }
-        if (array_key_exists('is_paid', $data)) {
-            $payload['is_paid'] = (bool) $data['is_paid'];
-        }
-
-        if (!empty($payload)) {
+        if ($payload) {
             $order->update($payload);
         }
 
         return back()->with('success', 'Order updated.');
     }
 
+    // ====== DESTROY (resource route: DELETE /orders/{order}) =================
+    public function destroy(Order $order)
+    {
+        DB::transaction(function () use ($order) {
+            // If your FK has ON DELETE CASCADE, this next line is optional.
+            $order->orderItems()->delete();
+            $order->delete();
+        });
+
+        return back()->with('success', 'Order deleted.');
+    }
+
     // ====== PAYMENTS / RECEIPTS PAGE ========================================
     public function receiptsAndPayments()
     {
-        // Orders with computed total_amount per order
         $orders = Order::with('user:id,name,email')
             ->select('id', 'user_id', 'status', 'payment_method', 'is_paid', 'created_at')
             ->addSelect([
@@ -95,7 +98,6 @@ class OrderController extends Controller
                 return $o;
             });
 
-        // Totals by payment method (same logic used on dashboard)
         $totalsRow = DB::table('order_items')
             ->join('orders', 'orders.id', '=', 'order_items.order_id')
             ->join('menu_items', 'menu_items.id', '=', 'order_items.menu_item_id')
@@ -108,7 +110,6 @@ class OrderController extends Controller
         $cashTotal = (float) ($totalsRow->cash_total ?? 0);
         $qrTotal   = (float) ($totalsRow->qr_total   ?? 0);
 
-        // Current QR image URL (public/storage/qr/current.png)
         $qrUrl = Storage::disk('public')->exists('qr/current.png')
             ? asset('storage/qr/current.png')
             : null;
@@ -123,12 +124,11 @@ class OrderController extends Controller
         ]);
     }
 
-    // ====== Actions triggered from the Payments page =========================
+    // ====== Actions used on Payments page ===================================
     public function updatePaymentMethod(Request $request, Order $order)
     {
         $data = $request->validate(['payment_method' => 'required|in:cash,qr']);
         $order->update(['payment_method' => $data['payment_method']]);
-
         return back()->with('success', 'Payment method updated.');
     }
 
@@ -136,7 +136,6 @@ class OrderController extends Controller
     {
         $data = $request->validate(['is_paid' => 'required|boolean']);
         $order->update(['is_paid' => (bool) $data['is_paid']]);
-
         return back()->with('success', 'Order payment status updated.');
     }
 
@@ -146,9 +145,7 @@ class OrderController extends Controller
             'qr' => 'required|image|mimes:png,jpg,jpeg,webp|max:4096',
         ]);
 
-        // Save as a fixed name so the UI can always reference the same URL
         $request->file('qr')->storeAs('qr', 'current.png', 'public');
-
         return back()->with('success', 'QR image updated.');
     }
 }
