@@ -1,79 +1,86 @@
-import React, { useState } from 'react';
-import { router, usePage, Link } from '@inertiajs/react';
+import React from "react";
+import { Head, useForm } from "@inertiajs/react";
+import AuthenticatedLayout from "@/Layouts/AuthenticatedLayout";
 
 export default function Create() {
-  const { errors } = usePage().props;
-
-  const [form, setForm] = useState({
-    name: '',
-    description: '',
-    price: '',
-    stock: '',
+  const { data, setData, post, processing, errors } = useForm({
+    name: "",
+    price: "",
+    stock_qty: 0,
+    is_active: true,
     image: null,
   });
 
-  const handleChange = (e) => {
-    const { name, value, files } = e.target;
-    setForm((prev) => ({
-      ...prev,
-      [name]: files ? files[0] : value,
-    }));
-  };
-
-  const handleSubmit = (e) => {
+  const submit = (e) => {
     e.preventDefault();
-    const data = new FormData();
-    data.append('name', form.name);
-    data.append('description', form.description);
-    data.append('price', form.price);
-    data.append('stock', form.stock);
-    if (form.image) {
-      data.append('image', form.image);
-    }
-
-    router.post(route('menu-items.store'), data, { forceFormData: true });
+    post("/menuitems");
   };
 
   return (
-    <div className="p-6 max-w-xl mx-auto">
-      <h1 className="text-2xl font-bold mb-4 text-mu-blue">Add New Menu Item</h1>
-
-      <form onSubmit={handleSubmit} className="space-y-4" encType="multipart/form-data">
-        {['name', 'description', 'price', 'stock'].map((field) => (
-          <div key={field}>
-            <label className="block font-medium capitalize">{field}</label>
-            <input
-              type={field === 'description' ? 'textarea' : field === 'price' || field === 'stock' ? 'number' : 'text'}
-              name={field}
-              value={form[field]}
-              onChange={handleChange}
-              className="w-full border rounded p-2"
-            />
-            {errors[field] && <div className="text-red-600">{errors[field]}</div>}
-          </div>
-        ))}
+    <AuthenticatedLayout header={<h2 className="text-xl font-semibold text-gray-100">Add Menu Item</h2>}>
+      <Head title="Add Menu Item" />
+      <form onSubmit={submit} className="max-w-xl space-y-4">
+        <div>
+          <label className="block text-slate-300 mb-1">Name</label>
+          <input
+            className="w-full rounded bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"
+            value={data.name}
+            onChange={(e) => setData("name", e.target.value)}
+          />
+          {errors.name && <div className="text-red-400 text-sm mt-1">{errors.name}</div>}
+        </div>
 
         <div>
-          <label className="block font-medium">Upload Image (optional)</label>
+          <label className="block text-slate-300 mb-1">Price</label>
           <input
-            type="file"
-            name="image"
-            onChange={handleChange}
-            className="w-full border rounded p-2"
-            accept="image/*"
+            type="number"
+            step="0.01"
+            className="w-full rounded bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"
+            value={data.price}
+            onChange={(e) => setData("price", e.target.value)}
           />
-          {errors.image && <div className="text-red-600">{errors.image}</div>}
+          {errors.price && <div className="text-red-400 text-sm mt-1">{errors.price}</div>}
         </div>
 
-        <div className="flex items-center space-x-4">
-          <button type="submit" className="bg-mu-gold text-mu-blue px-4 py-2 rounded hover:bg-yellow-400">
-            Save
-          </button>
-          <Link href={route('menu-items.index')} className="text-gray-600 hover:underline">
-            Cancel
-          </Link>
+        <div>
+          <label className="block text-slate-300 mb-1">Quantity (stock)</label>
+          <input
+            type="number"
+            className="w-full rounded bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"
+            value={data.stock_qty}
+            onChange={(e) => setData("stock_qty", Number(e.target.value))}
+          />
+          {errors.stock_qty && <div className="text-red-400 text-sm mt-1">{errors.stock_qty}</div>}
         </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            id="is_active"
+            type="checkbox"
+            checked={data.is_active}
+            onChange={(e) => setData("is_active", e.target.checked)}
+          />
+          <label htmlFor="is_active" className="text-slate-300">Active</label>
+        </div>
+
+        <div>
+          <label className="block text-slate-300 mb-1">Image</label>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(e) => setData("image", e.target.files[0])}
+            className="text-slate-300"
+          />
+          {errors.image && <div className="text-red-400 text-sm mt-1">{errors.image}</div>}
+        </div>
+
+        <button
+          disabled={processing}
+          className="px-4 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40"
+        >
+          Save
+        </button>
       </form>
-    </div>
+    </AuthenticatedLayout>
   );
 }

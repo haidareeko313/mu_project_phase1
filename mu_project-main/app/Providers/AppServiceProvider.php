@@ -2,27 +2,41 @@
 
 namespace App\Providers;
 
-use Illuminate\Support\Facades\Vite;
-use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Schema;
-use Laravel\Fortify\Contracts\LoginResponse as LoginResponseContract;
-use App\Http\Responses\LoginResponse;
+use Illuminate\Support\ServiceProvider;
+use Inertia\Inertia;
 
 class AppServiceProvider extends ServiceProvider
 {
-    /**
-     * Register any application services.
-     */
-    public function register()
-{
-    $this->app->singleton(LoginResponseContract::class, LoginResponse::class);
-}
+    public function register(): void
+    {
+        //
+    }
 
-    /**
-     * Bootstrap any application services.
-     */
-   public function boot()
-{
-    Schema::defaultStringLength(191);
-}
+    public function boot(): void
+    {
+        // Fix "Specified key was too long; max key length is 1000 bytes"
+        Schema::defaultStringLength(125);
+
+        // Optional: share common props with Inertia
+        Inertia::share([
+            'auth' => function () {
+                $u = auth()->user();
+                return $u ? [
+                    'user' => [
+                        'id'    => $u->id,
+                        'name'  => $u->name,
+                        'email' => $u->email,
+                        'roles' => method_exists($u, 'getRoleNames') ? $u->getRoleNames() : [],
+                    ],
+                ] : null;
+            },
+            'flash' => function () {
+                return [
+                    'success' => session('success'),
+                    'error'   => session('error'),
+                ];
+            },
+        ]);
+    }
 }

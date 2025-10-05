@@ -3,20 +3,35 @@
 namespace App\Http\Controllers;
 
 use App\Models\MenuItem;
-use App\Models\InventoryLog;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 
 class MenuItemController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        // If your MenuItem has an accessor getImageUrlAttribute(), this is fine.
-        // Otherwise, your React page is already resolving the URL with /storage/.
-        $menuItems = MenuItem::latest()->get();
+        $q = MenuItem::query()
+            ->when($request->search, fn ($qq) =>
+                $qq->where('name', 'like', '%'.$request->search.'%'))
+            ->orderBy('name');
+
+        $items = $q->paginate(12);
 
         return Inertia::render('MenuItems/Index', [
-            'menuItems' => $menuItems,
+            'filters' => [
+                'search' => $request->search ?? '',
+            ],
+            'items' => $items->through(function (MenuItem $mi) {
+                return [
+                    'id'        => $mi->id,
+                    'name'      => $mi->name,
+                    'price'     => number_format($mi->price, 2),
+                    'stock_qty' => $mi->stock_qty,
+                    'is_active' => $mi->is_active,
+                    'image_url' => $mi->image ? Storage::url($mi->image) : null,
+                ];
+            }),
         ]);
     }
 
@@ -27,75 +42,66 @@ class MenuItemController extends Controller
 
     public function store(Request $request)
     {
-        $validated = $request->validate([
-            'name'        => 'required|string|max:255',
-            'description' => 'nullable|string',
-            'price'       => 'required|numeric|min:0',
-            'stock'       => 'required|integer|min:0',
-            'image'       => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
+        $data = $request->validate([
+            'name'       => ['required', 'string', 'max:255'],
+            'price'      => ['required', 'numeric', 'min:0'],
+            'stock_qty'  => ['required', 'integer', 'min:0'],
+            'is_active'  => ['required', 'boolean'],
+            'image'      => ['nullable', 'image', 'max:4096'],
         ]);
 
         if ($request->hasFile('image')) {
-            // Stored as "menu_images/filename.ext" on the "public" disk -> /storage/menu_images/...
-            $validated['image'] = $request->file('image')->store('menu_images', 'public');
+            $data['image'] = $request->file('image')->store('menu_images', 'public');
         }
 
-        MenuItem::create($validated);
+        MenuItem::create($data);
 
-        return redirect()->route('menu-items.index')->with('success', 'Item created!');
+        return redirect()->route('menuitems.index')->with('success', 'Item created.');
     }
 
-    public function edit($id)
+    public function edit(MenuItem $menuitem)
     {
-        $menuItem = MenuItem::findOrFail($id);
-
         return Inertia::render('MenuItems/Edit', [
-            'menuItem' => $menuItem,
+            'item' => [
+                'id'        => $menuitem->id,
+                'name'      => $menuitem->name,
+                'price'     => (float) $menuitem->price,
+                'stock_qty' => $menuitem->stock_qty,
+                'is_active' => (bool) $menuitem->is_active,
+                'image_url' => $menuitem->image ? Storage::url($menuitem->image) : null,
+            ],
         ]);
     }
 
-    public function update(Request $request, $id)
+    public function update(Request $request, MenuItem $menuitem)
     {
-        $menuItem = MenuItem::findOrFail($id);
-
-        $validated = $request->validate([
-            'name'        => 'required|string|max:255',
-            'description' => 'nullable|string',
-            'price'       => 'required|numeric|min:0',
-            'stock'       => 'required|integer|min:0',
-            'note'        => 'nullable|string|max:255',
-            'image'       => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
+        $data = $request->validate([
+            'name'       => ['required', 'string', 'max:255'],
+            'price'      => ['required', 'numeric', 'min:0'],
+            'stock_qty'  => ['required', 'integer', 'min:0'],
+            'is_active'  => ['required', 'boolean'],
+            'image'      => ['nullable', 'image', 'max:4096'],
         ]);
 
         if ($request->hasFile('image')) {
-            $validated['image'] = $request->file('image')->store('menu_images', 'public');
+            if ($menuitem->image) {
+                Storage::disk('public')->delete($menuitem->image);
+            }
+            $data['image'] = $request->file('image')->store('menu_images', 'public');
         }
 
-        $originalStock = (int) $menuItem->stock;
+        $menuitem->update($data);
 
-        $menuItem->update($validated);
-
-        // Log stock change if it changed
-        $newStock = (int) $validated['stock'];
-        $diff     = $newStock - $originalStock;
-
-        if ($diff !== 0) {
-            InventoryLog::create([
-                'menu_item_id'     => $menuItem->id,
-                'action'           => $diff > 0 ? 'increase' : 'decrease',
-                'quantity_changed' => $diff, // negative for decrease, positive for increase
-                'note'             => $validated['note'] ?? null,
-            ]);
-        }
-
-        return redirect()->route('menu-items.index')->with('success', 'Menu item updated.');
+        return redirect()->route('menuitems.index')->with('success', 'Item updated.');
     }
 
-    public function destroy($id)
+    public function destroy(MenuItem $menuitem)
     {
-        $menuItem = MenuItem::findOrFail($id);
-        $menuItem->delete();
+        if ($menuitem->image) {
+            Storage::disk('public')->delete($menuitem->image);
+        }
+        $menuitem->delete();
 
-        return redirect()->route('menu-items.index')->with('success', 'Menu item deleted.');
+        return redirect()->route('menuitems.index')->with('success', 'Item deleted.');
     }
 }

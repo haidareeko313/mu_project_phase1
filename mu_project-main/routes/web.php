@@ -1,47 +1,39 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+
 use App\Http\Controllers\CafeteriaController;
 use App\Http\Controllers\OrderController;
-use App\Http\Controllers\MenuItemController;
 use App\Http\Controllers\InventoryLogController;
-use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\MenuItemController;
+use App\Http\Controllers\PaymentController;
 
 Route::redirect('/', '/cafeteria');
 
-// Everything below requires login + verified email
 Route::middleware(['auth', 'verified'])->group(function () {
-    // Dashboard
-    Route::get('/cafeteria', [CafeteriaController::class, 'index'])->name('cafeteria');
+    Route::get('/cafeteria', [CafeteriaController::class, 'index'])->name('cafeteria.index');
 
-    // Menu Items & Orders
-    Route::resource('menu-items', MenuItemController::class)->except(['show']);
-    Route::resource('orders', OrderController::class)->except(['show']); // ->update will be used
+    Route::get('/orders', [OrderController::class, 'index'])->name('orders.index');
+    Route::post('/orders', [OrderController::class, 'store'])->name('orders.store');
 
-    // Inventory logs
     Route::get('/inventory-logs', [InventoryLogController::class, 'index'])->name('inventory.index');
-    Route::delete('/inventory-logs/{id}', [InventoryLogController::class, 'destroy'])->name('inventory.destroy');
 
-    // Payments / Receipts page
-    Route::get('/payments-receipts', [OrderController::class, 'receiptsAndPayments'])
-        ->name('orders.receipts_payments');
+    Route::get('/payments', [PaymentController::class, 'index'])->name('payments.index');
+    Route::post('/payments/{order}/paid',   [PaymentController::class, 'markPaid']);
+    Route::post('/payments/{order}/unpaid', [PaymentController::class, 'markUnpaid']);
+    Route::post('/payments/{order}/method', [PaymentController::class, 'setMethod']);
+    Route::post('/payments/qr',             [PaymentController::class, 'uploadQr']);
 
-    // Row actions (still available if you use them)
-    Route::patch('/orders/{order}/payment-method', [OrderController::class, 'updatePaymentMethod'])
-        ->name('orders.update_method');
+    Route::get('/menuitems', [MenuItemController::class, 'index'])->name('menuitems.index');
+    Route::get('/menuitems/create', [MenuItemController::class, 'create'])->name('menuitems.create');
+    Route::post('/menuitems', [MenuItemController::class, 'store'])->name('menuitems.store');
+    Route::get('/menuitems/{menuitem}/edit', [MenuItemController::class, 'edit'])->name('menuitems.edit');
+    Route::put('/menuitems/{menuitem}', [MenuItemController::class, 'update'])->name('menuitems.update');
+    Route::delete('/menuitems/{menuitem}', [MenuItemController::class, 'destroy'])->name('menuitems.destroy');
 
-    Route::patch('/orders/{order}/mark-paid', [OrderController::class, 'markPaid'])
-        ->name('orders.mark_paid');
+    Route::get('/menu', [MenuItemController::class, 'index'])->name('menu.index');
 
-    // QR upload
-    Route::post('/payments/qr-upload', [OrderController::class, 'uploadQr'])
-        ->name('payments.qr_upload');
-
-    // Profile (Ziggy helpers like route('profile.edit') need these)
-    Route::get('/profile',  [ProfileController::class, 'edit'])->name('profile.edit');
-    Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
-    Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
+    Route::get('/profile', fn () => inertia('Profile/Edit'))->name('profile.edit');
 });
 
-// Breeze/Jetstream auth scaffolding (includes POST /logout)
 require __DIR__.'/auth.php';

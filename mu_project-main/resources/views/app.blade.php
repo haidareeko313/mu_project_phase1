@@ -1,20 +1,20 @@
 <!DOCTYPE html>
-<html class="dark" lang="{{ str_replace('_','-', app()->getLocale()) }}">
-  <head>
+<html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
+<head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="csrf-token" content="{{ csrf_token() }}" />
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
     <title inertia>{{ config('app.name', 'Laravel') }}</title>
 
-    {{-- Ziggy routes for route() in React --}}
-    @routes
-
-    {{-- Vite / Inertia --}}
+    {{-- React fast-refresh preamble (REQUIRED for @vitejs/plugin-react) --}}
     @viteReactRefresh
-    @vite(['resources/js/app.jsx']) {{-- CSS is imported by app.jsx --}}
+
+    {{-- Your assets (make sure the JS entry is app.jsx) --}}
+    @vite(['resources/css/app.css', 'resources/js/app.jsx'])
+
     @inertiaHead
-  </head>
-  <body class="antialiased">
+</head>
+<body class="font-sans antialiased bg-slate-900 text-slate-100">
     @inertia
-  </body>
+</body>
 </html>

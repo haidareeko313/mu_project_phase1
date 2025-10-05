@@ -12,16 +12,22 @@ class OrderItem extends Model
     protected $fillable = [
         'order_id',
         'menu_item_id',
-        'quantity', 
+        'quantity',
+        'unit_price',
+    ];
+
+    protected $casts = [
+        'quantity'   => 'integer',
+        'unit_price' => 'decimal:2',
     ];
 
     public function order()
-{
-    return $this->belongsTo(\App\Models\Order::class);
-}
-public function menuItem()
-{
-    return $this->belongsTo(\App\Models\MenuItem::class);
-}
+    {
+        return $this->belongsTo(Order::class);
+    }
 
+    public function menuItem()
+    {
+        return $this->belongsTo(MenuItem::class);
+    }
 }

@@ -5,147 +5,108 @@ namespace App\Http\Controllers;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\MenuItem;
+use App\Models\InventoryLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 
 class OrderController extends Controller
 {
-    // ====== LIST ORDERS ======================================================
     public function index()
     {
-        $orders = Order::with(['user', 'orderItems.menuItem'])
+        $orders = Order::with([
+                'user:id,name',
+                'items.menuItem:id,name',
+            ])
             ->latest()
-            ->get()
-            ->map(function ($o) {
-                return [
-                    'id'             => $o->id,
-                    'status'         => $o->status,
-                    'payment_method' => $o->payment_method,
-                    'is_paid'        => (bool) $o->is_paid,
-                    'created_at'     => $o->created_at?->toDateTimeString(),
-                    'user'           => $o->user ? [
-                        'id'    => $o->user->id,
-                        'name'  => $o->user->name,
-                        'email' => $o->user->email,
-                    ] : null,
-                    'items'          => $o->orderItems->map(fn ($it) => [
-                        'id'       => $it->id,
-                        'quantity' => $it->quantity,
-                        'menu_item'=> [
-                            'id'    => $it->menuItem?->id,
-                            'name'  => $it->menuItem?->name,
-                            'price' => $it->menuItem?->price,
-                        ],
-                    ]),
-                ];
-            });
+            ->paginate(25);
 
         return Inertia::render('Orders/Index', [
-            'orders' => $orders,
+            'orders' => $orders->through(function ($o) {
+                return [
+                    'id'       => $o->id,
+                    'user'     => $o->user?->name,
+                    'status'   => $o->status,
+                    'is_paid'  => (bool) $o->is_paid,
+                    'method'   => strtoupper($o->payment_method),
+                    'created'  => $o->created_at->format('m/d/Y, h:i:s A'),
+                    'items'    => $o->items->map(fn ($it) => [
+                        'name' => $it->menuItem?->name ?? '',
+                        'qty'  => $it->quantity,
+                    ])->values(),
+                ];
+            }),
         ]);
     }
 
-    // ====== UPDATE (resource route: PATCH /orders/{order}) ===================
-    public function update(Request $request, Order $order)
+    public function store(Request $request)
     {
         $data = $request->validate([
-            'status'         => 'nullable|in:pending,preparing,ready,picked_up,cancelled',
-            'payment_method' => 'nullable|in:cash,qr',
-            'is_paid'        => 'nullable|boolean',
+            'method'        => ['required', 'in:qr,cash,QR,CASH'],
+            'items'         => ['required', 'array', 'min:1'],
+            'items.*.id'    => ['required', 'integer', 'exists:menu_items,id'],
+            'items.*.qty'   => ['required', 'integer', 'min:1'],
         ]);
 
-        $payload = [];
-        if (array_key_exists('status', $data))         $payload['status']         = $data['status'];
-        if (array_key_exists('payment_method', $data)) $payload['payment_method'] = $data['payment_method'];
-        if (array_key_exists('is_paid', $data))        $payload['is_paid']        = (bool) $data['is_paid'];
+        $method = strtolower($data['method']) === 'cash' ? 'CASH' : 'QR';
 
-        if ($payload) {
-            $order->update($payload);
+        $ids   = collect($data['items'])->pluck('id')->all();
+        $map   = collect($data['items'])->keyBy('id'); // qty lookup
+        $items = MenuItem::whereIn('id', $ids)->get();
+
+        // Optional: basic stock check
+        foreach ($items as $mi) {
+            $need = (int) $map[$mi->id]['qty'];
+            if ($mi->stock_qty !== null && $mi->stock_qty < $need) {
+                return back()->with('error', "Not enough stock for {$mi->name}.");
+            }
         }
 
-        return back()->with('success', 'Order updated.');
-    }
+        $pickup = null;
 
-    // ====== DESTROY (resource route: DELETE /orders/{order}) =================
-    public function destroy(Order $order)
-    {
-        DB::transaction(function () use ($order) {
-            // If your FK has ON DELETE CASCADE, this next line is optional.
-            $order->orderItems()->delete();
-            $order->delete();
+        DB::transaction(function () use ($items, $map, $method, &$pickup) {
+            $order = Order::create([
+                'user_id'        => auth()->id(),
+                'status'         => 'pending',
+                'is_paid'        => 0,
+                'payment_method' => $method,
+                'pickup_code'    => $method === 'CASH'
+                    ? str_pad((string) random_int(0, 9999), 4, '0', STR_PAD_LEFT)
+                    : null,
+            ]);
+
+            foreach ($items as $mi) {
+                $qty = (int) $map[$mi->id]['qty'];
+
+                OrderItem::create([
+                    'order_id'     => $order->id,
+                    'menu_item_id' => $mi->id,
+                    'quantity'     => $qty,
+                    'unit_price'   => $mi->price,
+                ]);
+
+                // decrement stock
+                if (!is_null($mi->stock_qty)) {
+                    $mi->decrement('stock_qty', $qty);
+                }
+
+                InventoryLog::create([
+                    'menu_item_id'     => $mi->id,
+                    'quantity_changed' => -$qty,
+                    'action'           => 'decrement',
+                ]);
+            }
+
+            $pickup = $order->pickup_code;
+            session()->flash('last_order_id', $order->id);
+            if ($method === 'CASH') {
+                session()->flash('pickup_code', $pickup);
+            } else {
+                session()->flash('show_qr', true);
+            }
+            session()->flash('success', 'Order created! Please pay at the counter.');
         });
 
-        return back()->with('success', 'Order deleted.');
-    }
-
-    // ====== PAYMENTS / RECEIPTS PAGE ========================================
-    public function receiptsAndPayments()
-    {
-        $orders = Order::with('user:id,name,email')
-            ->select('id', 'user_id', 'status', 'payment_method', 'is_paid', 'created_at')
-            ->addSelect([
-                'total_amount' => DB::table('order_items')
-                    ->join('menu_items', 'menu_items.id', '=', 'order_items.menu_item_id')
-                    ->whereColumn('order_items.order_id', 'orders.id')
-                    ->selectRaw('COALESCE(SUM(order_items.quantity * menu_items.price), 0)')
-            ])
-            ->orderByDesc('created_at')
-            ->get()
-            ->map(function ($o) {
-                $o->total_amount = (float) $o->total_amount;
-                return $o;
-            });
-
-        $totalsRow = DB::table('order_items')
-            ->join('orders', 'orders.id', '=', 'order_items.order_id')
-            ->join('menu_items', 'menu_items.id', '=', 'order_items.menu_item_id')
-            ->selectRaw("
-                SUM(CASE WHEN orders.payment_method = 'cash' THEN order_items.quantity * menu_items.price ELSE 0 END) AS cash_total,
-                SUM(CASE WHEN orders.payment_method = 'qr'   THEN order_items.quantity * menu_items.price ELSE 0 END) AS qr_total
-            ")
-            ->first();
-
-        $cashTotal = (float) ($totalsRow->cash_total ?? 0);
-        $qrTotal   = (float) ($totalsRow->qr_total   ?? 0);
-
-        $qrUrl = Storage::disk('public')->exists('qr/current.png')
-            ? asset('storage/qr/current.png')
-            : null;
-
-        return Inertia::render('Orders/PaymentsReceipts', [
-            'orders'         => $orders,
-            'totals'         => [
-                'cash_total' => $cashTotal,
-                'qr_total'   => $qrTotal,
-            ],
-            'qr_public_path' => $qrUrl,
-        ]);
-    }
-
-    // ====== Actions used on Payments page ===================================
-    public function updatePaymentMethod(Request $request, Order $order)
-    {
-        $data = $request->validate(['payment_method' => 'required|in:cash,qr']);
-        $order->update(['payment_method' => $data['payment_method']]);
-        return back()->with('success', 'Payment method updated.');
-    }
-
-    public function markPaid(Request $request, Order $order)
-    {
-        $data = $request->validate(['is_paid' => 'required|boolean']);
-        $order->update(['is_paid' => (bool) $data['is_paid']]);
-        return back()->with('success', 'Order payment status updated.');
-    }
-
-    public function uploadQr(Request $request)
-    {
-        $request->validate([
-            'qr' => 'required|image|mimes:png,jpg,jpeg,webp|max:4096',
-        ]);
-
-        $request->file('qr')->storeAs('qr', 'current.png', 'public');
-        return back()->with('success', 'QR image updated.');
+        return back();
     }
 }

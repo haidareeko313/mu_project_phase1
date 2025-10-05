@@ -6,26 +6,22 @@ use Illuminate\Database\Eloquent\Model;
 
 class MenuItem extends Model
 {
-    protected $fillable = ['name','description','price','stock','image'];
+    protected $fillable = [
+        'name',
+        'price',
+        'image',
+        'is_active',
+        'stock_qty',
+    ];
 
-    // 👇 ensures image_url is included in JSON sent to Inertia
-    protected $appends = ['image_url'];
+    protected $casts = [
+        'price'     => 'decimal:2',
+        'is_active' => 'boolean',
+        'stock_qty' => 'integer',
+    ];
 
-    public function getImageUrlAttribute(): string
+    public function orderItems()
     {
-        // Fallback
-        if (empty($this->image)) {
-            return asset('images/placeholder.png');
-        }
-
-        // If you ever save full URLs, just return them
-        if (preg_match('~^https?://~i', $this->image)) {
-            return $this->image;
-        }
-
-        // Strip possible "public/" and point to /storage/...
-        $clean = preg_replace('~^public/~', '', $this->image);
-
-        return asset('storage/'.ltrim($clean, '/'));
+        return $this->hasMany(OrderItem::class);
     }
 }

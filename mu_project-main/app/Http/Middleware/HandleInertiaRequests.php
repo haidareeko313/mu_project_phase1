@@ -7,36 +7,32 @@ use Inertia\Middleware;
 
 class HandleInertiaRequests extends Middleware
 {
-    /**
-     * The root template that is loaded on the first page visit.
-     */
     protected $rootView = 'app';
 
-    /**
-     * Determines the current asset version.
-     */
-    public function version(Request $request): string|null
+    public function version(Request $request): ?string
     {
         return parent::version($request);
     }
 
-    /**
-     * Define the props that are shared by default.
-     */
     public function share(Request $request): array
     {
+        $user = $request->user();
+
         return array_merge(parent::share($request), [
             'auth' => [
-                'user' => fn () => $request->user() ? [
-                    'id' => $request->user()->id,
-                    'name' => $request->user()->name,
-                    'email' => $request->user()->email,
-                    'profile_photo_path' => $request->user()->profile_photo_path,
+                'user' => $user ? [
+                    'id'       => $user->id,
+                    'name'     => $user->name,
+                    'email'    => $user->email,
+                    'is_admin' => (bool)($user->is_admin ?? false),
                 ] : null,
             ],
             'flash' => [
                 'success' => fn () => $request->session()->get('success'),
-                'error' => fn () => $request->session()->get('error'),
+                'error'   => fn () => $request->session()->get('error'),
+                'last_order_id' => fn () => $request->session()->get('last_order_id'),
+                'pickup_code'   => fn () => $request->session()->get('pickup_code'),
+                'show_qr'       => fn () => $request->session()->get('show_qr'),
             ],
         ]);
     }

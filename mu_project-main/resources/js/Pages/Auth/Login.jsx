@@ -1,92 +1,103 @@
-import React, { useState } from "react";
+import React, { useEffect } from "react";
 import { Head, Link, useForm } from "@inertiajs/react";
+import GuestLayout from "@/Layouts/GuestLayout";
 
-export default function Login() {
-  const { data, setData, post, processing, errors } = useForm({
+export default function Login({ status = "", canResetPassword = true }) {
+  const { data, setData, post, processing, errors, reset } = useForm({
     email: "",
     password: "",
     remember: false,
   });
 
+  useEffect(() => {
+    return () => {
+      reset("password");
+    };
+  }, []);
+
   const submit = (e) => {
     e.preventDefault();
-    post(route("login"));
+    // No Ziggy here — just post to the path
+    post("/login");
   };
 
   return (
-    <>
+    <GuestLayout>
       <Head title="Log in" />
-      <div className="min-h-screen flex items-center justify-center bg-gray-100 p-6">
-        <div className="w-full max-w-md space-y-6">
-          <div className="text-center">
-            <h1 className="text-2xl font-semibold text-gray-800">Welcome back</h1>
-            <p className="text-sm text-gray-500 mt-1">
-              Sign in to your account
-            </p>
-          </div>
 
-          <form onSubmit={submit} className="rounded-lg bg-white p-6 shadow border space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Email</label>
-              <input
-                type="email"
-                value={data.email}
-                onChange={(e) => setData("email", e.target.value)}
-                className="mt-1 w-full rounded-md border-gray-300 focus:border-indigo-500 focus:ring-indigo-500"
-                autoComplete="username"
-                required
-              />
-              {errors.email && <p className="mt-1 text-sm text-red-600">{errors.email}</p>}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Password</label>
-              <input
-                type="password"
-                value={data.password}
-                onChange={(e) => setData("password", e.target.value)}
-                className="mt-1 w-full rounded-md border-gray-300 focus:border-indigo-500 focus:ring-indigo-500"
-                autoComplete="current-password"
-                required
-              />
-              {errors.password && <p className="mt-1 text-sm text-red-600">{errors.password}</p>}
-            </div>
-
-            <div className="flex items-center justify-between">
-              <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={data.remember}
-                  onChange={(e) => setData("remember", e.target.checked)}
-                />
-                Remember me
-              </label>
-
-              <Link
-                href={route("password.request")}
-                className="text-sm text-indigo-600 hover:text-indigo-700"
-              >
-                Forgot password?
-              </Link>
-            </div>
-
-            <button
-              type="submit"
-              disabled={processing}
-              className="w-full rounded-md bg-indigo-600 px-4 py-2 text-white font-medium hover:bg-indigo-700 disabled:opacity-60"
-            >
-              {processing ? "Signing in…" : "Sign in"}
-            </button>
-          </form>
-
-          <p className="text-center text-sm text-gray-600">
-            Don’t have an account?{" "}
-            <Link href={route("register")} className="text-indigo-600 hover:text-indigo-700">
-              Create one
-            </Link>
-          </p>
+      {status && (
+        <div className="mb-4 rounded border border-emerald-700 bg-emerald-900/30 px-3 py-2 text-emerald-200">
+          {status}
         </div>
-      </div>
-    </>
+      )}
+
+      <form onSubmit={submit} className="space-y-4">
+        <div>
+          <label htmlFor="email" className="block text-sm text-slate-300">
+            Email
+          </label>
+          <input
+            id="email"
+            type="email"
+            value={data.email}
+            onChange={(e) => setData("email", e.target.value)}
+            className="mt-1 w-full rounded border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100 focus:border-indigo-500 focus:outline-none"
+            autoComplete="username"
+          />
+          {errors.email && <div className="mt-1 text-sm text-red-400">{errors.email}</div>}
+        </div>
+
+        <div>
+          <label htmlFor="password" className="block text-sm text-slate-300">
+            Password
+          </label>
+          <input
+            id="password"
+            type="password"
+            value={data.password}
+            onChange={(e) => setData("password", e.target.value)}
+            className="mt-1 w-full rounded border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100 focus:border-indigo-500 focus:outline-none"
+            autoComplete="current-password"
+          />
+          {errors.password && <div className="mt-1 text-sm text-red-400">{errors.password}</div>}
+        </div>
+
+        <div className="flex items-center justify-between">
+          <label className="inline-flex items-center gap-2 text-sm text-slate-300">
+            <input
+              type="checkbox"
+              checked={data.remember}
+              onChange={(e) => setData("remember", e.target.checked)}
+              className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-indigo-500 focus:ring-0"
+            />
+            Remember me
+          </label>
+
+          {canResetPassword && (
+            <Link
+              href="/forgot-password"
+              className="text-sm text-indigo-400 hover:text-indigo-300"
+            >
+              Forgot your password?
+            </Link>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between">
+          <button
+            type="submit"
+            disabled={processing}
+            className="rounded bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700 disabled:opacity-40"
+          >
+            Log in
+          </button>
+
+          {/* If you keep registration enabled */}
+          <Link href="/register" className="text-sm text-slate-300 hover:text-white">
+            Create account
+          </Link>
+        </div>
+      </form>
+    </GuestLayout>
   );
 }
