@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Order;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Storage;
@@ -11,48 +12,44 @@ use Carbon\Carbon;
 
 class PaymentController extends Controller
 {
-    /**
-     * Payments dashboard
-     */
     public function index()
     {
-        // Current QR on public disk
+        // Current QR
         $qrPath = 'payments_qr/current.png';
-        $qrUrl = null;
-        if (Storage::disk('public')->exists($qrPath)) {
-            $qrUrl = asset('storage/' . $qrPath) . '?t=' . time(); // cache buster
-        }
+        $qrUrl = Storage::disk('public')->exists($qrPath)
+            ? asset('storage/'.$qrPath) . '?t=' . time()
+            : null;
 
         // Recent orders
         $orders = Order::with(['user:id,name', 'items'])
             ->latest()
             ->paginate(25);
 
+        // Users (for Roles panel)
+        $users = User::select('id','name','email','role')
+            ->orderBy('name')
+            ->get();
+
         return Inertia::render('Payments/Index', [
             'currentQr' => $qrUrl,
             'orders' => $orders->through(function ($o) {
-                // ----- figure out a cash code to show (support both new + legacy) -----
+                // Cash code for pending CASH orders (encrypted or legacy)
                 $cashCode = null;
                 $isCash   = strtoupper($o->payment_method) === 'CASH';
                 $isPaid   = (bool) $o->is_paid;
-                $isPendingByNewField = ($o->payment_status ?? 'pending') === 'pending';
+                $pending  = ($o->payment_status ?? 'pending') === 'pending';
 
-                if ($isCash && ! $isPaid && $isPendingByNewField) {
-                    // prefer new encrypted field
+                if ($isCash && ! $isPaid && $pending) {
                     if (!empty($o->pickup_code_encrypted)) {
                         try {
                             $cashCode = Crypt::decryptString($o->pickup_code_encrypted);
-                        } catch (\Throwable $e) {
-                            $cashCode = null;
-                        }
+                        } catch (\Throwable $e) { $cashCode = null; }
                     }
-                    // fallback: legacy plaintext column if exists
                     if (!$cashCode && !empty($o->pickup_code)) {
                         $cashCode = $o->pickup_code;
                     }
                 }
 
-                // compute total from items (if not stored on Order)
                 $total = optional($o->items)->sum(function ($it) {
                     return ((float) ($it->unit_price ?? 0)) * ((int) ($it->quantity ?? 0));
                 });
@@ -69,12 +66,10 @@ class PaymentController extends Controller
                     'created'   => $o->created_at?->format('Y-m-d H:i:s'),
                 ];
             }),
+            'users' => $users,
         ]);
     }
 
-    /**
-     * Mark order paid
-     */
     public function markPaid(Order $order)
     {
         $order->is_paid = 1;
@@ -82,19 +77,11 @@ class PaymentController extends Controller
         $order->paid_at = Carbon::now();
         $order->paid_by = auth()->id();
 
-        // clear any codes so they can't be reused
-        if (schema()->hasColumn('orders', 'pickup_code_hash')) {
-            $order->pickup_code_hash = null;
-        }
-        if (schema()->hasColumn('orders', 'pickup_code_encrypted')) {
-            $order->pickup_code_encrypted = null;
-        }
-        if (schema()->hasColumn('orders', 'pickup_code_expires_at')) {
-            $order->pickup_code_expires_at = null;
-        }
-        // legacy plaintext column (if you still have it)
-        if (schema()->hasColumn('orders', 'pickup_code')) {
-            $order->pickup_code = null;
+        // Clear codes so they can't be reused
+        foreach (['pickup_code_hash','pickup_code_encrypted','pickup_code_expires_at','pickup_code'] as $col) {
+            if (app('db.schema')->hasColumn('orders', $col)) {
+                $order->{$col} = null;
+            }
         }
 
         $order->save();
@@ -102,9 +89,6 @@ class PaymentController extends Controller
         return back()->with('success', "Order #{$order->id} marked paid.");
     }
 
-    /**
-     * Mark order unpaid
-     */
     public function markUnpaid(Order $order)
     {
         $order->is_paid = 0;
@@ -116,9 +100,6 @@ class PaymentController extends Controller
         return back()->with('success', "Order #{$order->id} marked unpaid.");
     }
 
-    /**
-     * Set payment method to QR or CASH
-     */
     public function setMethod(Request $request, Order $order)
     {
         $data = $request->validate([
@@ -131,9 +112,6 @@ class PaymentController extends Controller
         return back()->with('success', "Order #{$order->id} set to {$order->payment_method}.");
     }
 
-    /**
-     * Upload QR image to public storage
-     */
     public function uploadQr(Request $request)
     {
         $request->validate([
@@ -144,14 +122,25 @@ class PaymentController extends Controller
 
         return back()->with('success', 'QR uploaded.');
     }
-}
 
-/**
- * Tiny helper to check columns safely (avoids errors if some migrations not applied yet).
- */
-if (! function_exists('schema')) {
-    function schema()
+    // -------- Roles panel actions --------
+
+    /** Optional endpoint if you want a separate page; not required for the panel */
+    public function listUsers()
     {
-        return app('db.schema');
+        $users = User::select('id','name','email','role')->orderBy('name')->get();
+        return Inertia::render('Admin/Roles', ['users' => $users]);
+    }
+
+    /** Set a user's role to admin|student (from Roles panel) */
+    public function setUserRole(Request $request, User $user)
+    {
+        $data = $request->validate([
+            'role' => ['required','in:admin,student'],
+        ]);
+        $user->role = $data['role'];
+        $user->save();
+
+        return back()->with('success', "{$user->name} is now {$user->role}.");
     }
 }
