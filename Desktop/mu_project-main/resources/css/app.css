@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Small helpers you were relying on in JSX */
+.card {
+  @apply rounded border border-slate-700 bg-slate-800 overflow-hidden;
+}
+.btn {
+  @apply inline-flex items-center justify-center rounded px-3 py-1.5 text-sm;
+}
+.btn-primary {
+  @apply btn bg-indigo-600 text-white hover:bg-indigo-700;
+}
+.btn-muted {
+  @apply btn bg-slate-700 text-slate-100 hover:bg-slate-600;
+}
