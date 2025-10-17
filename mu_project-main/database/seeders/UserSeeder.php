@@ -2,39 +2,31 @@
 
 namespace Database\Seeders;
 
+use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
-use App\Models\User;
-use Spatie\Permission\Traits\HasRoles;
 
-class UserSeeder extends Seeder
-{
-    public function run(): void
-    {
-        // Admin
-        $admin = User::firstOrCreate(
+class UserSeeder extends Seeder {
+    public function run(): void {
+        User::updateOrCreate(
             ['email' => 'admin@example.com'],
             [
                 'name' => 'Admin',
-                'password' => Hash::make('pass123'),
+                'password' => Hash::make('admin123'),
+                'role' => 'admin',
                 'email_verified_at' => now(),
             ]
         );
-        if (method_exists($admin, 'syncRoles')) {
-            $admin->syncRoles(['admin']);
-        }
 
-        // Student
-        $student = User::firstOrCreate(
+        User::updateOrCreate(
             ['email' => 'student@example.com'],
             [
                 'name' => 'Student',
-                'password' => Hash::make('pass123'),
+                'password' => Hash::make('student123'),
+                'role' => 'student',
                 'email_verified_at' => now(),
             ]
         );
-        if (method_exists($student, 'syncRoles')) {
-            $student->syncRoles(['student']);
-        }
     }
 }
+
