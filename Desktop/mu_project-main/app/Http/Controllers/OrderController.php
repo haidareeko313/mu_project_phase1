@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\MenuItem;
 use App\Models\Order;
+use App\Models\InventoryLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -67,7 +68,7 @@ class OrderController extends Controller
 
         $orders = $builder->paginate(25)->appends($request->query());
 
-        // ✅ Simplified transformer (no Total, no Items)
+        // Simplified transformer (UI fields)
         $orders->getCollection()->transform(function (Order $o) {
             return [
                 'id'         => $o->id,
@@ -95,6 +96,9 @@ class OrderController extends Controller
 
     /**
      * Create a new order from the Cafeteria page.
+     * - Inserts the order (and order_items if present)
+     * - Decrements stock_qty for each item
+     * - Writes an InventoryLog row per item (negative qty)
      */
     public function store(Request $request)
     {
@@ -108,9 +112,7 @@ class OrderController extends Controller
         $user = $request->user();
 
         $ids     = collect($request->input('items'))->pluck('id')->all();
-        $dbItems = MenuItem::whereIn('id', $ids)
-            ->get(['id', 'price', 'name'])
-            ->keyBy('id');
+        $dbItems = MenuItem::whereIn('id', $ids)->get(['id','price','name','stock_qty'])->keyBy('id');
 
         $total = 0.0;
         $lines = [];
@@ -146,11 +148,12 @@ class OrderController extends Controller
             : null;
 
         [$newOrder, $pickup] = DB::transaction(function () use ($request, $user, $total, $lines, $qtyCol, $priceCol, $hasOrderItems) {
+            // create order
             $o = new Order();
             $o->user_id = $user->id;
             $o->status  = 'pending';
             $o->method  = $request->method;
-            $o->total   = $total; // still saved, just not shown
+            $o->total   = $total;
             $pickup = null;
 
             if ($request->method === 'CASH') {
@@ -160,6 +163,7 @@ class OrderController extends Controller
 
             $o->save();
 
+            // order_items (if table/columns exist)
             if ($hasOrderItems && $qtyCol && $priceCol) {
                 $rows = [];
                 foreach ($lines as $ln) {
@@ -175,6 +179,23 @@ class OrderController extends Controller
                 if (!empty($rows)) {
                     DB::table('order_items')->insert($rows);
                 }
+            }
+
+            // 🔻 decrement stock + 📝 write inventory logs
+            foreach ($lines as $ln) {
+                // decrement stock (never below zero)
+                DB::table('menu_items')
+                    ->where('id', $ln['menu_item_id'])
+                    ->update([
+                        'stock_qty' => DB::raw('GREATEST(stock_qty - '.(int)$ln['qty'].', 0)')
+                    ]);
+
+                InventoryLog::create([
+                    'menu_item_id'     => $ln['menu_item_id'],
+                    'user_id'          => $user->id ?? null,
+                    'action'           => 'order',
+                    'quantity_changed' => -1 * (int)$ln['qty'], // negative: removed from stock
+                ]);
             }
 
             return [$o, $pickup];

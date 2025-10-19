@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\MenuItem;
+use App\Models\InventoryLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
@@ -27,8 +28,8 @@ class MenuItemController extends Controller
                     'id'        => $mi->id,
                     'name'      => $mi->name,
                     'price'     => number_format($mi->price, 2),
-                    'stock_qty' => $mi->stock_qty,
-                    'is_active' => $mi->is_active,
+                    'stock_qty' => (int) $mi->stock_qty,
+                    'is_active' => (bool) $mi->is_active,
                     'image_url' => $mi->image ? Storage::url($mi->image) : null,
                 ];
             }),
@@ -42,19 +43,34 @@ class MenuItemController extends Controller
 
     public function store(Request $request)
     {
-        $data = $request->validate([
+        $validated = $request->validate([
             'name'       => ['required', 'string', 'max:255'],
             'price'      => ['required', 'numeric', 'min:0'],
             'stock_qty'  => ['required', 'integer', 'min:0'],
-            'is_active'  => ['required', 'boolean'],
+            'is_active'  => ['nullable'],               // normalize below
             'image'      => ['nullable', 'image', 'max:4096'],
         ]);
 
+        $validated['is_active'] = $request->boolean('is_active');
+
         if ($request->hasFile('image')) {
-            $data['image'] = $request->file('image')->store('menu_images', 'public');
+            // run once: php artisan storage:link
+            $validated['image'] = $request->file('image')->store('menu_images', 'public');
         }
 
-        MenuItem::create($data);
+        // create item
+        $item = MenuItem::create($validated);
+
+        // 📝 log initial stock if non-zero
+        $initial = (int) ($validated['stock_qty'] ?? 0);
+        if ($initial !== 0) {
+            InventoryLog::create([
+                'menu_item_id'     => $item->id,
+                'user_id'          => $request->user()->id ?? null,
+                'action'           => 'adjustment',
+                'quantity_changed' => $initial, // positive add
+            ]);
+        }
 
         return redirect()->route('menuitems.index')->with('success', 'Item created.');
     }
@@ -66,7 +82,7 @@ class MenuItemController extends Controller
                 'id'        => $menuitem->id,
                 'name'      => $menuitem->name,
                 'price'     => (float) $menuitem->price,
-                'stock_qty' => $menuitem->stock_qty,
+                'stock_qty' => (int) $menuitem->stock_qty,
                 'is_active' => (bool) $menuitem->is_active,
                 'image_url' => $menuitem->image ? Storage::url($menuitem->image) : null,
             ],
@@ -75,22 +91,38 @@ class MenuItemController extends Controller
 
     public function update(Request $request, MenuItem $menuitem)
     {
-        $data = $request->validate([
+        $validated = $request->validate([
             'name'       => ['required', 'string', 'max:255'],
             'price'      => ['required', 'numeric', 'min:0'],
             'stock_qty'  => ['required', 'integer', 'min:0'],
-            'is_active'  => ['required', 'boolean'],
+            'is_active'  => ['nullable'],
             'image'      => ['nullable', 'image', 'max:4096'],
         ]);
+
+        $validated['is_active'] = $request->boolean('is_active');
 
         if ($request->hasFile('image')) {
             if ($menuitem->image) {
                 Storage::disk('public')->delete($menuitem->image);
             }
-            $data['image'] = $request->file('image')->store('menu_images', 'public');
+            $validated['image'] = $request->file('image')->store('menu_images', 'public');
         }
 
-        $menuitem->update($data);
+        // compute delta before update
+        $old = (int) $menuitem->stock_qty;
+        $menuitem->update($validated);
+        $new = (int) $menuitem->stock_qty;
+        $delta = $new - $old;
+
+        // 📝 log only when stock actually changes
+        if ($delta !== 0) {
+            InventoryLog::create([
+                'menu_item_id'     => $menuitem->id,
+                'user_id'          => $request->user()->id ?? null,
+                'action'           => 'adjustment',
+                'quantity_changed' => $delta, // +added / -removed
+            ]);
+        }
 
         return redirect()->route('menuitems.index')->with('success', 'Item updated.');
     }
@@ -100,6 +132,7 @@ class MenuItemController extends Controller
         if ($menuitem->image) {
             Storage::disk('public')->delete($menuitem->image);
         }
+
         $menuitem->delete();
 
         return redirect()->route('menuitems.index')->with('success', 'Item deleted.');

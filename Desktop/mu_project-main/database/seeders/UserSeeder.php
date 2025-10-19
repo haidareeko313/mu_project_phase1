@@ -6,8 +6,11 @@ use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
 
-class UserSeeder extends Seeder {
-    public function run(): void {
+class UserSeeder extends Seeder
+{
+    public function run(): void
+    {
+        // Admin
         User::updateOrCreate(
             ['email' => 'admin@example.com'],
             [
@@ -18,6 +21,7 @@ class UserSeeder extends Seeder {
             ]
         );
 
+        // Student
         User::updateOrCreate(
             ['email' => 'student@example.com'],
             [
@@ -29,4 +33,3 @@ class UserSeeder extends Seeder {
         );
     }
 }
-
