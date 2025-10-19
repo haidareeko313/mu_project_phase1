@@ -10,16 +10,24 @@ class CafeteriaController extends Controller
 {
     public function index()
     {
-        $items = MenuItem::where('is_active', true)
+        $items = MenuItem::query()
             ->orderBy('name')
-            ->get(['id','name','price','image','updated_at']);
+            ->get(['id', 'name', 'price', 'image'])
+            ->map(function ($mi) {
+                return [
+                    'id'    => $mi->id,
+                    'name'  => $mi->name,
+                    'price' => (float) $mi->price,
+                    'image' => $mi->image, // stored path (we render as /storage/<path> on the page)
+                ];
+            });
 
-        // Cache-busted QR url so the newest image is always shown
-        $qrPath = 'payments_qr/current.png';
-        $qrUrl  = null;
-        if (Storage::disk('public')->exists($qrPath)) {
-            $ver   = Storage::disk('public')->lastModified($qrPath);
-            $qrUrl = asset('storage/'.$qrPath) . '?v=' . $ver;
+        // Current QR with cache-buster to defeat browser caching after uploads
+        $qrUrl = null;
+        $disk = Storage::disk('public');
+        if ($disk->exists('payments/qr.png')) {
+            $version = $disk->lastModified('payments/qr.png'); // unix timestamp
+            $qrUrl   = asset('storage/payments/qr.png') . '?v=' . $version;
         }
 
         return Inertia::render('Cafeteria/Index', [

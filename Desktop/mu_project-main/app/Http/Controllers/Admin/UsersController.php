@@ -11,29 +11,36 @@ class UsersController extends Controller
 {
     public function index(Request $request)
     {
-        $query = User::query();
+        $q    = trim((string) $request->query('q', ''));
+        $role = $request->query('role'); // admin|student|any
 
-        if ($s = $request->string('q')->toString()) {
-            $query->where(function ($q) use ($s) {
-                $q->where('name', 'like', "%$s%")
-                  ->orWhere('email', 'like', "%$s%");
+        $builder = User::select('id','name','email','role');
+
+        if ($q !== '') {
+            $builder->where(function ($qb) use ($q) {
+                $qb->where('email', 'like', "%{$q}%")
+                   ->orWhere('name', 'like', "%{$q}%");
             });
         }
+        if ($role && $role !== 'any') {
+            $builder->where('role', $role);
+        }
 
-        return Inertia::render('Admin/Users/Index', [
-            'users' => $query->orderBy('name')->get(['id','name','email','role']),
-            'filters' => ['q' => $s ?? ''],
+        $users = $builder->orderBy('name')->paginate(25)->appends($request->query());
+
+        return Inertia::render('Admin/Roles', [
+            'filters'     => ['q' => $q, 'role' => $role],
+            'users'       => $users,
+            'roleOptions' => ['admin','student'],
         ]);
     }
 
-    public function toggle(Request $request, User $user)
+    public function setUserRole(Request $request, User $user)
     {
-        $role = $request->string('role')->toString();
-        if (! in_array($role, ['admin','student'], true)) {
-            $role = $user->role === 'admin' ? 'student' : 'admin';
-        }
-        $user->update(['role' => $role]);
+        $data = $request->validate(['role' => ['required', 'in:admin,student']]);
+        $user->role = $data['role'];
+        $user->save();
 
-        return back()->with('success', 'Role updated.');
+        return back()->with('success', "{$user->name} is now {$user->role}.");
     }
 }

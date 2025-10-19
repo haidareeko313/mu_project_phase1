@@ -3,25 +3,24 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Support\Facades\Storage;
 
 class MenuItem extends Model
 {
-    protected $fillable = [
-        'name',
-        'price',
-        'image',
-        'is_active',
-        'stock_qty',
-    ];
+    use HasFactory;
 
-    protected $casts = [
-        'price'     => 'decimal:2',
-        'is_active' => 'boolean',
-        'stock_qty' => 'integer',
-    ];
+    // If you already have $fillable/$guarded keep yours.
+    protected $appends = ['image_url'];
 
-    public function orderItems()
+    public function getImageUrlAttribute(): ?string
     {
-        return $this->hasMany(OrderItem::class);
+        // $this->image should be a path relative to the "public" disk (e.g. "menu_images/foo.png")
+        if (!$this->image) {
+            return null;
+        }
+        return Storage::disk('public')->exists($this->image)
+            ? Storage::url($this->image)   // => "/storage/menu_images/....png"
+            : null;                        // force UI to show placeholder instead of 404
     }
 }

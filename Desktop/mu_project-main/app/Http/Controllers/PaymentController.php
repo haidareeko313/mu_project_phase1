@@ -3,122 +3,122 @@
 namespace App\Http\Controllers;
 
 use App\Models\Order;
-use App\Models\User;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
-use Carbon\Carbon;
 
 class PaymentController extends Controller
 {
-    /** Payments dashboard (no Roles here) */
-    public function index()
+    public function index(Request $request)
     {
-        $qrPath = 'payments_qr/current.png';
-        $qrUrl = Storage::disk('public')->exists($qrPath)
-            ? asset('storage/'.$qrPath) . '?t=' . time()
-            : null;
+        $q     = $request->string('q')->toString();
+        $paid  = $request->string('paid')->toString();   // 'any'|'yes'|'no'
+        $stat  = $request->string('status')->toString(); // 'any'|'pending'|'completed'
+        $meth  = $request->string('method')->toString(); // 'any'|'CASH'|'QR'
+        $from  = $request->string('from')->toString();
+        $to    = $request->string('to')->toString();
 
-        $orders = Order::with(['user:id,name', 'items'])
-            ->latest()
-            ->paginate(25);
+        $builder = Order::query()->with('user');
+
+        if ($q !== '') {
+            $builder->where(function ($b) use ($q) {
+                $b->where('id', $q)
+                  ->orWhereHas('user', fn ($u) => $u->where('email', 'like', "%$q%"));
+            });
+        }
+
+        if ($stat && $stat !== 'any') {
+            $builder->where('status', $stat);
+        }
+
+        if ($meth && $meth !== 'any') {
+            $builder->where('method', $meth);
+        }
+
+        if ($from) $builder->where('created_at', '>=', $from.' 00:00:00');
+        if ($to)   $builder->where('created_at', '<=', $to.' 23:59:59');
+
+        // "Paid" is derived from "status"
+        if ($paid === 'yes') $builder->where('status', 'completed');
+        if ($paid === 'no')  $builder->where('status', '!=', 'completed');
+
+        $orders = $builder->latest()->paginate(25)->appends($request->query());
+
+        // Current QR with cache-buster
+        $qrUrl = null;
+        $disk = Storage::disk('public');
+        if ($disk->exists('payments/qr.png')) {
+            $version = $disk->lastModified('payments/qr.png');
+            $qrUrl = asset('storage/payments/qr.png') . '?v=' . $version;
+        }
+
+        // Map to a simple DTO including cash_code
+        $rows = $orders->getCollection()->map(function (Order $o) {
+            return [
+                'id'        => $o->id,
+                'user'      => optional($o->user)->email ?? '—',
+                'status'    => $o->status,
+                'paid'      => $o->status === 'completed' ? 'Yes' : 'No',
+                'method'    => $o->method,
+                'cash_code' => $o->cash_code ?? null,   // <—— MAKE SURE THIS GOES OUT
+                'total'     => (float)($o->total ?? 0),
+                'created'   => optional($o->created_at)->format('Y-m-d H:i:s'),
+            ];
+        });
+
+        // swap the paginated collection with our mapped rows
+        $orders->setCollection($rows);
 
         return Inertia::render('Payments/Index', [
-            'currentQr' => $qrUrl,
-            'orders' => $orders->through(function ($o) {
-                $cashCode = null;
-                $isCash   = strtoupper($o->payment_method) === 'CASH';
-                $isPaid   = (bool) $o->is_paid;
-
-                if ($isCash && !$isPaid) {
-                    // keep showing a code if it's there (old schema variants handled below)
-                    $cashCode = $o->pickup_code ?? null;
-                    if (!$cashCode && !empty($o->pickup_code_hash)) $cashCode = '****';
-                    if (!$cashCode && !empty($o->pickup_code_encrypted)) $cashCode = '****';
-                    if (!$cashCode && !empty($o->pickup_code_expires_at)) $cashCode = '****';
-                    if (!$cashCode && !empty($o->pickup_code)) $cashCode = $o->pickup_code;
-                }
-
-                $total = optional($o->items)->sum(fn($it) => (float)($it->unit_price ?? 0) * (int)($it->quantity ?? 0));
-
-                return [
-                    'id'        => $o->id,
-                    'user'      => $o->user?->name,
-                    // 👇 force display “completed” whenever paid
-                    'status'    => $o->is_paid ? 'completed' : $o->status,
-                    'is_paid'   => $isPaid,
-                    'method'    => strtoupper($o->payment_method),
-                    'payment_status' => $o->payment_status ?? ($isPaid ? 'paid' : 'pending'),
-                    'cash_code' => $cashCode,
-                    'total'     => number_format((float) $total, 2),
-                    'created'   => $o->created_at?->format('Y-m-d H:i:s'),
-                ];
-            }),
+            'orders'  => $orders,
+            'filters' => [
+                'q'      => $q, 'paid' => $paid ?: 'any',
+                'status' => $stat ?: 'any', 'method' => $meth ?: 'any',
+                'from'   => $from, 'to' => $to,
+            ],
+            'qrUrl'   => $qrUrl,
         ]);
     }
 
-    /** Mark paid */
     public function markPaid(Order $order)
     {
-        $order->is_paid = 1;
-        $order->payment_status = 'paid';
-        // 👇 write DB status too
+        // Flip both together as requested (DB might not have a 'paid' column, so we use only status)
         $order->status = 'completed';
-        $order->paid_at = Carbon::now();
-        $order->paid_by = auth()->id();
-        foreach (['pickup_code_hash','pickup_code_encrypted','pickup_code_expires_at','pickup_code'] as $col) {
-            if (app('db.schema')->hasColumn('orders', $col)) $order->{$col} = null;
-        }
         $order->save();
+
         return back()->with('success', "Order #{$order->id} marked paid.");
     }
 
-    /** Mark unpaid */
     public function markUnpaid(Order $order)
     {
-        $order->is_paid = 0;
-        $order->payment_status = 'pending';
-        // 👇 revert DB status as well
         $order->status = 'pending';
-        $order->paid_at = null;
-        $order->paid_by = null;
         $order->save();
+
         return back()->with('success', "Order #{$order->id} marked unpaid.");
     }
 
-    /** Change payment method */
-    public function setMethod(Request $request, Order $order)
+    public function setMethod(Order $order, Request $request)
     {
-        $data = $request->validate(['method' => ['required', 'in:QR,CASH,qr,cash']]);
-        $order->payment_method = strtoupper($data['method']);
+        $request->validate(['method' => ['required', 'in:CASH,QR']]);
+
+        $order->method = $request->method;
+
+        // If switching to CASH and no code exists yet, issue a code
+        if ($order->method === 'CASH' && empty($order->cash_code)) {
+            $order->cash_code = str_pad((string)random_int(0, 9999), 4, '0', STR_PAD_LEFT);
+        }
+
         $order->save();
-        return back()->with('success', "Order #{$order->id} set to {$order->payment_method}.");
+
+        return back()->with('success', "Order #{$order->id} method updated.");
     }
 
-    /** Upload QR */
     public function uploadQr(Request $request)
     {
         $request->validate(['qr' => ['required','image','mimes:png,jpg,jpeg','max:4096']]);
-        $request->file('qr')->storeAs('payments_qr', 'current.png', 'public');
-        return back()->with('success', 'QR uploaded.');
-    }
 
-    /** ---- ROLES PAGE ---- */
+        $path = $request->file('qr')->storeAs('payments', 'qr.png', 'public');
 
-    /** Show Roles page */
-    public function listUsers()
-    {
-        $users = User::select('id','name','email','role')->orderBy('name')->get();
-        return Inertia::render('Admin/Roles', ['users' => $users]);
-    }
-
-    /** Change a user's role */
-    public function setUserRole(Request $request, User $user)
-    {
-        $data = $request->validate(['role' => ['required','in:admin,student']]);
-        $user->role = $data['role'];
-        $user->save();
-        return back()->with('success', "{$user->name} is now {$user->role}.");
+        return back()->with('success', 'QR updated.');
     }
 }

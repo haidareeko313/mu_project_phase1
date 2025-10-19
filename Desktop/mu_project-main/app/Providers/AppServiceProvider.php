@@ -5,6 +5,8 @@ namespace App\Providers;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\ServiceProvider;
 use Inertia\Inertia;
+use App\Models\InventoryLog;
+use App\Observers\InventoryLogObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -17,6 +19,9 @@ class AppServiceProvider extends ServiceProvider
     {
         // Fix "Specified key was too long; max key length is 1000 bytes"
         Schema::defaultStringLength(125);
+
+        // ✅ Register the observer so user_id is auto-filled on create
+        InventoryLog::observe(InventoryLogObserver::class);
 
         // Optional: share common props with Inertia
         Inertia::share([
