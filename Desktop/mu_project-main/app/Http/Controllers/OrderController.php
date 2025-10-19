@@ -26,7 +26,8 @@ class OrderController extends Controller
                 return [
                     'id'       => $o->id,
                     'user'     => $o->user?->name,
-                    'status'   => $o->status,
+                    // 👇 force display “completed” whenever the order is paid
+                    'status'   => $o->is_paid ? 'completed' : $o->status,
                     'is_paid'  => (bool) $o->is_paid,
                     'method'   => strtoupper($o->payment_method),
                     'created'  => $o->created_at->format('m/d/Y, h:i:s A'),
@@ -77,24 +78,16 @@ class OrderController extends Controller
 
             foreach ($items as $mi) {
                 $qty = (int) $map[$mi->id]['qty'];
-
-                OrderItem::create([
-                    'order_id'     => $order->id,
+                $order->items()->create([
                     'menu_item_id' => $mi->id,
                     'quantity'     => $qty,
                     'unit_price'   => $mi->price,
                 ]);
 
-                // decrement stock
-                if (!is_null($mi->stock_qty)) {
+                // Optionally reduce stock
+                if ($mi->stock_qty !== null) {
                     $mi->decrement('stock_qty', $qty);
                 }
-
-                InventoryLog::create([
-                    'menu_item_id'     => $mi->id,
-                    'quantity_changed' => -$qty,
-                    'action'           => 'decrement',
-                ]);
             }
 
             $pickup = $order->pickup_code;

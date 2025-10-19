@@ -30,12 +30,13 @@ class PaymentController extends Controller
                 $cashCode = null;
                 $isCash   = strtoupper($o->payment_method) === 'CASH';
                 $isPaid   = (bool) $o->is_paid;
-                $pending  = ($o->payment_status ?? 'pending') === 'pending';
 
-                if ($isCash && ! $isPaid && $pending) {
-                    if (!empty($o->pickup_code_encrypted)) {
-                        try { $cashCode = Crypt::decryptString($o->pickup_code_encrypted); } catch (\Throwable $e) {}
-                    }
+                if ($isCash && !$isPaid) {
+                    // keep showing a code if it's there (old schema variants handled below)
+                    $cashCode = $o->pickup_code ?? null;
+                    if (!$cashCode && !empty($o->pickup_code_hash)) $cashCode = '****';
+                    if (!$cashCode && !empty($o->pickup_code_encrypted)) $cashCode = '****';
+                    if (!$cashCode && !empty($o->pickup_code_expires_at)) $cashCode = '****';
                     if (!$cashCode && !empty($o->pickup_code)) $cashCode = $o->pickup_code;
                 }
 
@@ -44,7 +45,8 @@ class PaymentController extends Controller
                 return [
                     'id'        => $o->id,
                     'user'      => $o->user?->name,
-                    'status'    => $o->status,
+                    // 👇 force display “completed” whenever paid
+                    'status'    => $o->is_paid ? 'completed' : $o->status,
                     'is_paid'   => $isPaid,
                     'method'    => strtoupper($o->payment_method),
                     'payment_status' => $o->payment_status ?? ($isPaid ? 'paid' : 'pending'),
@@ -56,11 +58,13 @@ class PaymentController extends Controller
         ]);
     }
 
-    /** Mark paid / unpaid / set method / upload QR unchanged… */
+    /** Mark paid */
     public function markPaid(Order $order)
     {
         $order->is_paid = 1;
         $order->payment_status = 'paid';
+        // 👇 write DB status too
+        $order->status = 'completed';
         $order->paid_at = Carbon::now();
         $order->paid_by = auth()->id();
         foreach (['pickup_code_hash','pickup_code_encrypted','pickup_code_expires_at','pickup_code'] as $col) {
@@ -70,16 +74,20 @@ class PaymentController extends Controller
         return back()->with('success', "Order #{$order->id} marked paid.");
     }
 
+    /** Mark unpaid */
     public function markUnpaid(Order $order)
     {
         $order->is_paid = 0;
         $order->payment_status = 'pending';
+        // 👇 revert DB status as well
+        $order->status = 'pending';
         $order->paid_at = null;
         $order->paid_by = null;
         $order->save();
         return back()->with('success', "Order #{$order->id} marked unpaid.");
     }
 
+    /** Change payment method */
     public function setMethod(Request $request, Order $order)
     {
         $data = $request->validate(['method' => ['required', 'in:QR,CASH,qr,cash']]);
@@ -88,6 +96,7 @@ class PaymentController extends Controller
         return back()->with('success', "Order #{$order->id} set to {$order->payment_method}.");
     }
 
+    /** Upload QR */
     public function uploadQr(Request $request)
     {
         $request->validate(['qr' => ['required','image','mimes:png,jpg,jpeg','max:4096']]);
