@@ -25,6 +25,7 @@ export default function AuthenticatedLayout({ header, children }) {
           { label: "Menu Items", href: "/menuitems" },
           { label: "Inventory Logs", href: "/inventory-logs" },
           { label: "Payments", href: "/payments" },
+          { label: "Analytics", href: "/analytics" }, // <= NEW LINK
           { label: "Roles", href: "/admin/roles" },
         ]
       : []),
@@ -60,7 +61,7 @@ export default function AuthenticatedLayout({ header, children }) {
               href="/logout"
               method="post"
               as="button"
-              className="px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-sm"
+              className="px-2 py-1 rounded bg-red-600 hover:bg-red-500 text-sm"
             >
               Logout
             </Link>
@@ -68,17 +69,17 @@ export default function AuthenticatedLayout({ header, children }) {
         </div>
       </header>
 
-      {/* Body: sidebar + content */}
+      {/* Main layout: sidebar + page content */}
       <div className="flex flex-1">
         {/* Sidebar */}
-        <aside className="w-60 shrink-0 bg-slate-800 border-r border-slate-700 p-4">
-          <nav className="flex flex-col space-y-1">
+        <aside className="w-52 bg-slate-900 border-r border-slate-800 p-4">
+          <nav className="flex flex-col gap-1">
             {links.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
                 className={[
-                  "px-3 py-2 rounded-md transition-colors duration-150",
+                  "px-3 py-2 rounded text-sm transition-colors",
                   isActive(link.href)
                     ? "bg-slate-700 text-white"
                     : "text-slate-300 hover:bg-slate-700",

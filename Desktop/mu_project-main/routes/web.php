@@ -10,6 +10,8 @@ use App\Http\Controllers\MenuItemController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\Admin\OrderVerificationController;
 use App\Http\Controllers\Admin\UsersController;
+use App\Http\Controllers\AnalyticsController;
+
 
 use App\Http\Middleware\AdminOnly;
 
@@ -33,6 +35,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/payments/{order}/unpaid', [PaymentController::class, 'markUnpaid'])->name('payments.unpaid');
         Route::post('/payments/{order}/method', [PaymentController::class, 'setMethod'])->name('payments.method');
         Route::post('/payments/qr',             [PaymentController::class, 'uploadQr'])->name('payments.qr');
+
+        
+        Route::get('/analytics', [AnalyticsController::class, 'index'])->name('analytics.index');
+        Route::post('/analytics/chat', [AnalyticsController::class, 'chat'])->name('analytics.chat');
+
 
         Route::get('/menuitems', [MenuItemController::class, 'index'])->name('menuitems.index');
         Route::get('/menuitems/create', [MenuItemController::class, 'create'])->name('menuitems.create');
