@@ -13,8 +13,6 @@ class AnalyticsController extends Controller
      */
     public function index()
     {
-        // We just render the page.
-        // The chat + KPIs will be filled by the /analytics/chat endpoint.
         return Inertia::render('Analytics/Index');
     }
 
@@ -24,35 +22,44 @@ class AnalyticsController extends Controller
      */
     public function chat(Request $request)
     {
+        // Accept message + optional window_days from the frontend
         $data = $request->validate([
-            'message' => ['required', 'string', 'max:2000'],
+            'message'      => ['required', 'string', 'max:2000'],
+            'window_days'  => ['nullable', 'integer', 'min:1', 'max:365'],
         ]);
 
         try {
-            // URL of the Python FastAPI service
             $pythonUrl = 'http://127.0.0.1:8001/analyze';
 
-            $response = Http::timeout(10)->post($pythonUrl, [
+            // Always send the message, optionally send window_days if present
+            $payload = [
                 'message' => $data['message'],
-            ]);
+            ];
+
+            if (isset($data['window_days'])) {
+                $payload['window_days'] = (int) $data['window_days'];
+            }
+
+            $response = Http::timeout(20)->post($pythonUrl, $payload);
 
             if ($response->failed()) {
                 return response()->json([
                     'assistant_message' => 'Sorry, the analytics service returned an error.',
-                    'kpis' => [],
-                    'visualizations' => [],
-                    'error' => $response->body(),
+                    'kpis'              => [],
+                    'visualizations'    => [],
+                    'alerts'            => [],
+                    'error'             => $response->body(),
                 ], 500);
             }
 
-            // Return exactly what Python returned
             return response()->json($response->json());
         } catch (\Throwable $e) {
             return response()->json([
                 'assistant_message' => 'Sorry, I could not reach the analytics service. Please make sure it is running.',
-                'kpis' => [],
-                'visualizations' => [],
-                'error' => $e->getMessage(),
+                'kpis'              => [],
+                'visualizations'    => [],
+                'alerts'            => [],
+                'error'             => $e->getMessage(),
             ], 500);
         }
     }

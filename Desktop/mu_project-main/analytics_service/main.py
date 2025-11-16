@@ -1,6 +1,6 @@
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from statistics import mean
 
 import pymysql
@@ -60,6 +60,7 @@ def get_total_sales():
 def get_sales_last_n_days(days: int):
     """
     Sum of orders.total per day for the last N days (all NON-CANCELLED orders).
+    Used for line charts and daily average.
     """
     days = max(1, min(int(days), 365))
     conn = get_connection()
@@ -86,6 +87,33 @@ def get_sales_last_n_days(days: int):
             ]
             values = [float(row["total_sales"] or 0) for row in rows]
             return labels, values
+    finally:
+        conn.close()
+
+
+def get_orders_stats_last_n_days(days: int):
+    """
+    Total sales and total orders in the last N days.
+    Used for 'Total Sales (Last X Days)' and 'Avg Order Value'.
+    """
+    days = max(1, min(int(days), 365))
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS num_orders,
+                       COALESCE(SUM(total), 0) AS total_sales
+                FROM orders
+                WHERE status <> 'cancelled'
+                  AND created_at >= CURDATE() - INTERVAL %s DAY
+                """,
+                (days,),
+            )
+            row = cur.fetchone()
+            num_orders = int(row["num_orders"] or 0)
+            total_sales = float(row["total_sales"] or 0)
+            return num_orders, total_sales
     finally:
         conn.close()
 
@@ -129,9 +157,6 @@ def split_top_and_worst_items(all_items, limit=5):
 
     - TOP: highest selling items (only items with qty > 0)
     - WORST: lowest selling items (including zero sales)
-    - We do NOT try to de-duplicate; an item can technically be
-      both best and worst only if you have very few items, which
-      is fine for visualization.
     """
     if not all_items:
         return [], []
@@ -150,13 +175,10 @@ def split_top_and_worst_items(all_items, limit=5):
 
 # ---------------- PAYMENTS ----------------
 def get_payment_breakdown(last_n_days=None):
-
     """
     Count orders by payment_method among orders.
 
-    NOTE: we no longer require paid = 1 because in some schemas
-    that field is not used consistently. We only require a
-    non-null payment_method.
+    We only require a non-null payment_method.
     """
     conn = get_connection()
     try:
@@ -227,15 +249,138 @@ def get_low_stock_items(threshold: int = 5, limit: int = 10):
         conn.close()
 
 
+def get_inventory_activity_today():
+    """
+    Return net inventory changes per item for *today*.
+
+    Positive = stock increased, negative = stock decreased.
+    Requires an inventory_logs table with a numeric change column
+    (quantity_change or change). If not available, returns [].
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            try:
+                # Common schema: quantity_change column
+                cur.execute(
+                    """
+                    SELECT mi.name AS item_name,
+                           COALESCE(SUM(l.quantity_change), 0) AS net_change
+                    FROM inventory_logs l
+                    JOIN menu_items mi ON mi.id = l.menu_item_id
+                    WHERE DATE(l.created_at) = CURDATE()
+                    GROUP BY mi.id, mi.name
+                    HAVING net_change <> 0
+                    ORDER BY net_change DESC
+                    """
+                )
+            except Exception:
+                # Fallback if the column is named 'change'
+                try:
+                    cur.execute(
+                        """
+                        SELECT mi.name AS item_name,
+                               COALESCE(SUM(l.change), 0) AS net_change
+                        FROM inventory_logs l
+                        JOIN menu_items mi ON mi.id = l.menu_item_id
+                        WHERE DATE(l.created_at) = CURDATE()
+                        GROUP BY mi.id, mi.name
+                        HAVING net_change <> 0
+                        ORDER BY net_change DESC
+                        """
+                    )
+                except Exception:
+                    return []
+
+            rows = cur.fetchall()
+            for r in rows:
+                r["net_change"] = int(r["net_change"] or 0)
+            return rows
+    finally:
+        conn.close()
+
+#------------------
+def get_menu_items_updated_today():
+    """
+    Fallback when we don't have per-change logs.
+
+    Returns items from menu_items whose updated_at is today,
+    with their *current* stock level. We don't know the exact
+    delta, only that they were touched.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT name,
+                       COALESCE(stock_qty, stock, 0) AS stock_level
+                FROM menu_items
+                WHERE DATE(updated_at) = CURDATE()
+                ORDER BY name ASC
+                """
+            )
+            rows = cur.fetchall()
+            for r in rows:
+                r["stock_level"] = int(r["stock_level"] or 0)
+            return rows
+    finally:
+        conn.close()
+
+
+# ---------------- TIME-OF-DAY / WEEK HEATMAP ----------------
+def get_time_of_day_heatmap(last_n_days: int):
+    """
+    Build a 7x24 matrix (days x hours) of order counts
+    for the last N days.
+
+    Returns (days_labels, hours_list, matrix)
+    """
+    last_n_days = max(1, min(int(last_n_days), 365))
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DAYOFWEEK(created_at) AS dow,
+                       HOUR(created_at) AS hour,
+                       COUNT(*) AS orders_count
+                FROM orders
+                WHERE status <> 'cancelled'
+                  AND created_at >= CURDATE() - INTERVAL %s DAY
+                GROUP BY DAYOFWEEK(created_at), HOUR(created_at)
+                ORDER BY DAYOFWEEK(created_at), HOUR(created_at)
+                """,
+                (last_n_days,),
+            )
+            rows = cur.fetchall()
+
+        # MySQL DAYOFWEEK: 1=Sunday, 7=Saturday
+        day_labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        hours = list(range(24))
+        matrix = [[0 for _ in hours] for _ in range(7)]
+
+        for row in rows:
+            dow = int(row["dow"])  # 1..7
+            hour = int(row["hour"])  # 0..23
+            count = int(row["orders_count"] or 0)
+            day_index = dow - 1  # 0..6
+            if 0 <= day_index < 7 and 0 <= hour < 24:
+                matrix[day_index][hour] = count
+
+        return day_labels, hours, matrix
+    finally:
+        conn.close()
+
+
 # ---------------- FORECASTING ----------------
 def linear_forecast(values):
     """
     Forecast tomorrow and next 7 days using recent daily sales.
 
     - If we have fewer than 4 days of data, we just use the average.
-    - Otherwise, we use a simple linear regression BUT we blend
-      it with the average and cap extremes so one crazy spike
-      won't give a ridiculous forecast.
+    - Otherwise, we use a simple linear regression blended with average
+      and cap extremes so one crazy spike won't give a ridiculous forecast.
     """
     if not values:
         return 0.0, 0.0
@@ -280,22 +425,68 @@ def linear_forecast(values):
     tomorrow = max(tomorrow, 0.0)
     next_7 = max(next_7, 0.0)
 
-    # Cap forecasts to avoid insane numbers:
-    # not more than 3x average daily
-    max_tomorrow = avg * 3
-    if tomorrow > max_tomorrow:
+    # Cap forecasts to avoid insane numbers: not more than 3x average
+    max_tomorrow = avg * 3 if avg > 0 else None
+    if max_tomorrow is not None and tomorrow > max_tomorrow:
         tomorrow = max_tomorrow
 
-    max_next7 = avg * 7 * 3
-    if next_7 > max_next7:
+    max_next7 = avg * 7 * 3 if avg > 0 else None
+    if max_next7 is not None and next_7 > max_next7:
         next_7 = max_next7
 
     return float(tomorrow), float(next_7)
 
 
-# ---------------- METRICS SUMMARY & AI ----------------
+def forecast_series(values, days_ahead: int):
+    """
+    Produce a daily forecast series for the next `days_ahead` days
+    using the same logic as `linear_forecast`.
+    """
+    days_ahead = max(1, int(days_ahead))
+    if not values:
+        return [0.0] * days_ahead
+
+    n = len(values)
+    avg = mean(values)
+
+    # Not enough history: flat forecast at the average
+    if n < 4:
+        return [float(max(avg, 0.0))] * days_ahead
+
+    x = list(range(n))
+    y = list(values)
+
+    sum_x = sum(x)
+    sum_y = sum(y)
+    sum_xx = sum(v * v for v in x)
+    sum_xy = sum(x[i] * y[i] for i in range(n))
+
+    denom = n * sum_xx - sum_x * sum_x
+    if denom == 0:
+        return [float(max(avg, 0.0))] * days_ahead
+
+    m = (n * sum_xy - sum_x * sum_y) / denom
+    b = (sum_y - m * sum_x) / n
+
+    series = []
+    for i in range(1, days_ahead + 1):
+        reg = b + m * (n - 1 + i)
+        blended = 0.5 * reg + 0.5 * avg
+        blended = max(blended, 0.0)
+        if avg > 0:
+            max_allowed = avg * 3
+            if blended > max_allowed:
+                blended = max_allowed
+        series.append(float(blended))
+
+    return series
+
+
+# ---------------- MESSAGE PARSING ----------------
 def extract_windows_from_message(message: str, default_short=7, default_long=30):
     """
+    (Kept for backwards compatibility, currently not used directly.)
+
     Detect a custom day window in the user's message.
 
     Supported examples:
@@ -304,32 +495,47 @@ def extract_windows_from_message(message: str, default_short=7, default_long=30)
     - "for 4 days"
     - "best items in 15 days"
     - even just "15 days" somewhere in the text
-
-    Whatever we detect, we use the same value for BOTH the short
-    and long windows so charts + items + payments are consistent.
     """
     msg = (message or "").lower()
 
-    # 1) Patterns like "last 10 days", "past 5 days", "for 4 days"
     m = re.search(r"(last|past|for)\s+(\d{1,3})\s+days?", msg)
     if m:
         days = int(m.group(2))
         days = max(1, min(days, 365))
         return days, days
 
-    # 2) Fallback: any "<number> days" in the text
     m = re.search(r"(\d{1,3})\s+days?", msg)
     if m:
         days = int(m.group(1))
         days = max(1, min(days, 365))
         return days, days
 
-    # 3) No hint -> defaults
     return default_short, default_long
 
 
+def find_explicit_days(message: str):
+    """
+    Look for 'last 10 days', 'past 5 days', 'for 3 days' or '10 days' in the text.
+    Returns an int or None.
+    """
+    msg = (message or "").lower()
+
+    m = re.search(r"(last|past|for)\s+(\d{1,3})\s+days?", msg)
+    if m:
+        days = int(m.group(2))
+        return max(1, min(days, 365))
+
+    m = re.search(r"(\d{1,3})\s+days?", msg)
+    if m:
+        days = int(m.group(1))
+        return max(1, min(days, 365))
+
+    return None
+
+
+# ---------------- METRICS SUMMARY & AI ----------------
 def build_metrics_summary(
-    total_sales: float,
+    total_sales_all_time: float,
     labels_short,
     values_short,
     labels_long,
@@ -343,12 +549,17 @@ def build_metrics_summary(
     forecast_next_7,
     avg_daily_sales,
     low_stock_items,
+    num_orders_short,
+    total_sales_short_period,
+    avg_order_value_short,
 ) -> str:
     """
     Turn raw metrics into a text summary that we pass to the AI model.
     """
     lines = []
-    lines.append(f"Total sales for all non-cancelled orders (all time): {total_sales:.2f} USD")
+    lines.append(
+        f"Total sales for all non-cancelled orders (all time): {total_sales_all_time:.2f} USD"
+    )
     lines.append("")
 
     # Short window summary
@@ -360,6 +571,21 @@ def build_metrics_summary(
         lines.append(f"- No non-cancelled orders found in the last {short_days} days.")
     lines.append("")
 
+    # Short window totals
+    lines.append(
+        f"Total sales in the last {short_days} days: {total_sales_short_period:.2f} USD"
+    )
+    lines.append(
+        f"Number of orders in the last {short_days} days: {num_orders_short} orders"
+    )
+    lines.append(
+        f"Average order value in the last {short_days} days: {avg_order_value_short:.2f} USD"
+    )
+    lines.append(
+        f"Average daily sales over the last {short_days} days: {avg_daily_sales:.2f} USD"
+    )
+    lines.append("")
+
     # Long window summary
     lines.append(f"Sales over the last {long_days} days (non-cancelled orders):")
     if labels_long:
@@ -367,10 +593,6 @@ def build_metrics_summary(
             lines.append(f"- {d}: {v:.2f} USD")
     else:
         lines.append(f"- No non-cancelled orders found in the last {long_days} days.")
-    lines.append("")
-
-    # Average daily sales
-    lines.append(f"Average daily sales over the last {short_days} days: {avg_daily_sales:.2f} USD")
     lines.append("")
 
     # Top items
@@ -418,7 +640,7 @@ def build_metrics_summary(
 
 
 def build_alerts(
-    total_sales,
+    total_sales_all_time,
     values_short,
     short_days,
     top_items,
@@ -428,63 +650,70 @@ def build_alerts(
     avg_daily_sales,
     payment_breakdown,
     low_stock_items,
+    num_orders_short,
+    total_sales_short_period,
+    avg_order_value_short,
+    heatmap_days,
+    heatmap_hours,
+    heatmap_matrix,
 ):
     """
-    More professional, business-style alerts and insights.
+    Concise, business-style alerts and insights.
     """
     alerts = []
+
+    def add(msg):
+        """Add at most 5 concise alerts."""
+        if msg and len(alerts) < 5:
+            alerts.append(msg)
 
     # ---- Sales behaviour vs average ----
     if values_short:
         last_day = values_short[-1]
         avg_short = mean(values_short)
-        diff = last_day - avg_short
-        diff_pct = (diff / avg_short * 100) if avg_short else 0
+        if avg_short > 0:
+            diff_pct = (last_day - avg_short) / avg_short * 100
+            if diff_pct <= -20:
+                add(
+                    f"📉 Sales on the most recent day are about {abs(diff_pct):.1f}% "
+                    f"below the average for the last {short_days} days."
+                )
+            elif diff_pct >= 20:
+                add(
+                    f"📈 Sales on the most recent day are about {diff_pct:.1f}% "
+                    f"above the average for the last {short_days} days."
+                )
 
-        if avg_short > 0 and diff_pct <= -20:
-            alerts.append(
-                f"📉 Recent sales are about {abs(diff_pct):.1f}% below the "
-                f"average for the last {short_days} days. Investigate potential "
-                "reasons such as holidays, schedule changes, or menu issues."
-            )
-        elif diff_pct >= 20:
-            alerts.append(
-                f"📈 Recent sales are approximately {diff_pct:.1f}% higher than the "
-                f"average for the last {short_days} days. Consider reinforcing "
-                "what worked (promotions, new items, timing, etc.)."
-            )
-
-        # Trend compared to previous day (if available)
         if len(values_short) >= 2:
             prev_day = values_short[-2]
             if prev_day > 0:
                 day_change = (last_day - prev_day) / prev_day * 100
                 direction = "up" if day_change >= 0 else "down"
-                alerts.append(
+                add(
                     f"📊 Day-over-day change: sales are {abs(day_change):.1f}% {direction} "
-                    "compared to the previous day within the selected window."
+                    "versus the previous day."
                 )
 
     # ---- No sales at all ----
-    if total_sales == 0:
-        alerts.append(
+    if total_sales_all_time == 0:
+        add(
             "⚠️ No non-cancelled orders were found. If this is unexpected, "
-            "review order statuses and data imports."
+            "check order statuses and imports."
         )
 
     # ---- Product performance ----
     if top_items:
         best = top_items[0]
-        alerts.append(
-            f"🏆 Best seller: '{best['item_name']}' with {best['qty']} units in the "
-            "selected period. Consider using it in promotions or combo offers."
+        add(
+            f"🏆 Best seller in the selected period: '{best['item_name']}' "
+            f"with {best['qty']} units."
         )
 
     if worst_items:
         worst = worst_items[0]
-        alerts.append(
+        add(
             f"🧊 Weak performer: '{worst['item_name']}' with only {worst['qty']} units "
-            "sold in the selected period. Review its recipe, pricing, or visibility."
+            "sold in the selected period."
         )
 
     # ---- Payment mix ----
@@ -500,14 +729,21 @@ def build_alerts(
             other_pct = other / total_payments * 100 if other > 0 else 0
 
             text = (
-                f"💳 Payment mix (selected period): CASH {cash_pct:.1f}% ({cash} orders), "
+                f"💳 Payment mix: CASH {cash_pct:.1f}% ({cash} orders), "
                 f"QR {qr_pct:.1f}% ({qr} orders)"
             )
             if other > 0:
                 text += f", OTHER {other_pct:.1f}% ({other} orders)."
             else:
                 text += "."
-            alerts.append(text)
+            add(text)
+
+    # ---- Average order value ----
+    if num_orders_short > 0:
+        add(
+            f"💵 Average order value in the last {short_days} days is "
+            f"{avg_order_value_short:.2f} USD over {num_orders_short} orders."
+        )
 
     # ---- Forecast ----
     if forecast_next_7 > 0 and avg_daily_sales > 0:
@@ -516,24 +752,44 @@ def build_alerts(
         diff_pct = diff / weekly_avg * 100 if weekly_avg else 0
 
         if abs(diff_pct) < 10:
-            desc = "roughly in line with recent performance"
+            desc = "roughly in line with a typical week"
         elif diff_pct > 0:
-            desc = f"about {diff_pct:.1f}% higher than the recent weekly average"
+            desc = f"about {diff_pct:.1f}% higher than a typical week"
         else:
-            desc = f"about {abs(diff_pct):.1f}% lower than the recent weekly average"
+            desc = f"about {abs(diff_pct):.1f}% lower than a typical week"
 
-        alerts.append(
-            f"🔮 Next 7 days forecast is approximately {forecast_next_7:.2f} USD, "
-            f"{desc}. Use this to plan staffing and inventory."
+        add(
+            f"🔮 Forecast for the next 7 days is around {forecast_next_7:.2f} USD, "
+            f"{desc}."
         )
 
-    # ---- Inventory ----
+    # ---- Inventory: low stock ----
     if low_stock_items:
-        names = ", ".join(f"{i['name']} ({i['stock_level']})" for i in low_stock_items[:5])
-        alerts.append(
-            f"📦 Low stock: {names}. Review purchase orders to avoid stockouts on "
-            "popular items."
+        top_low = low_stock_items[:3]
+        names = ", ".join(
+            f"{i['name']} ({i['stock_level']})" for i in top_low
         )
+        add(
+            f"📦 Low stock: {names}. Consider restocking soon."
+        )
+
+    # ---- Heatmap: busiest time ----
+    if heatmap_days and heatmap_hours and heatmap_matrix:
+        max_v = 0
+        best_day = None
+        best_hour = None
+        for d_idx, row in enumerate(heatmap_matrix):
+            for h_idx, v in enumerate(row):
+                if v > max_v:
+                    max_v = v
+                    best_day = heatmap_days[d_idx]
+                    best_hour = heatmap_hours[h_idx]
+
+        if max_v > 0 and best_day is not None and best_hour is not None:
+            add(
+                f"🕒 Busiest time in the selected period is around {best_day} at "
+                f"{best_hour:02d}:00 with about {max_v} orders."
+            )
 
     return alerts
 
@@ -541,6 +797,8 @@ def build_alerts(
 def ask_ai(user_message: str, metrics_summary: str) -> str:
     """
     Use an OpenAI model to create a natural-language answer.
+
+    We also instruct it to ALWAYS include recommended actions.
     """
     try:
         response = openai_client.chat.completions.create(
@@ -554,9 +812,13 @@ def ask_ai(user_message: str, metrics_summary: str) -> str:
                         "database. When the user asks about sales, menu items, "
                         "payments, inventory, or trends, use ONLY the metrics I give "
                         "you and explain them clearly with a business-oriented tone. "
+                        "Always finish your answer with a short section titled "
+                        "'Recommended actions' and include 1–3 bullet points with "
+                        "concrete, practical suggestions for the cafeteria manager. "
                         "When the question is general (for example, about the "
-                        "weather or colors), just answer normally. Be concise and "
-                        "practical."
+                        "weather or colors), just answer normally, but still try "
+                        "to provide 1–2 simple suggested follow-up actions if it "
+                        "makes sense."
                     ),
                 },
                 {
@@ -602,20 +864,43 @@ async def analyze(payload: dict = Body(...)):
     user_message = (payload.get("message") or "").strip()
     lower_msg = user_message.lower()
 
-    # Dynamic date windows from the message (e.g. "last 15 days")
-    short_days, long_days = extract_windows_from_message(user_message, 7, 30)
-        # Make sure these variables always exist, even if something fails later
+    # 0) Time window override from frontend filter (window_days) – optional
+    override_days = None
+    wd = payload.get("window_days")
+    if isinstance(wd, (int, float)):
+        override_days = int(wd)
+
+    # Decide which window to use:
+    # 1) If the user explicitly said "... for 2 days", that wins.
+    # 2) Else if the frontend filter is set, use that.
+    # 3) Else fall back to 7 / 30 days defaults.
+    explicit_days = find_explicit_days(user_message)
+
+    if explicit_days is not None:
+        short_days = long_days = explicit_days
+    elif override_days:
+        override_days = max(1, min(override_days, 365))
+        short_days = long_days = override_days
+    else:
+        short_days, long_days = 7, 30
+
     kpis = []
     visualizations = []
     alerts = []
     assistant_message = None
 
-
     # 1) Pull metrics from DB
     try:
-        total_sales = get_total_sales()
+        total_sales_all_time = get_total_sales()
         labels_short, values_short = get_sales_last_n_days(short_days)
         labels_long, values_long = get_sales_last_n_days(long_days)
+
+        num_orders_short, total_sales_short_period = get_orders_stats_last_n_days(
+            short_days
+        )
+        avg_order_value_short = (
+            total_sales_short_period / num_orders_short if num_orders_short else 0.0
+        )
 
         all_items = get_item_performance(last_n_days=long_days)
         top_items, worst_items = split_top_and_worst_items(all_items, limit=5)
@@ -625,23 +910,34 @@ async def analyze(payload: dict = Body(...)):
         avg_daily_sales = mean(values_short) if values_short else 0.0
         forecast_tomorrow, forecast_next_7 = linear_forecast(values_short)
 
+        forecast_values = forecast_series(values_short, short_days)
+
         low_stock_items = get_low_stock_items(threshold=5, limit=10)
+
+        heatmap_days, heatmap_hours, heatmap_matrix = get_time_of_day_heatmap(
+            short_days
+        )
 
         error_msg = None
     except Exception as e:
-        total_sales = 0.0
+        total_sales_all_time = 0.0
         labels_short, values_short = [], []
         labels_long, values_long = [], []
+        num_orders_short, total_sales_short_period = 0, 0.0
+        avg_order_value_short = 0.0
+        all_items = []
         top_items, worst_items = [], []
         payment_breakdown = {}
         avg_daily_sales = 0.0
         forecast_tomorrow, forecast_next_7 = 0.0, 0.0
+        forecast_values = []
         low_stock_items = []
+        heatmap_days, heatmap_hours, heatmap_matrix = [], [], []
         error_msg = str(e)
 
     # 2) Build metrics summary for the AI
     metrics_summary = build_metrics_summary(
-        total_sales,
+        total_sales_all_time,
         labels_short,
         values_short,
         labels_long,
@@ -655,6 +951,9 @@ async def analyze(payload: dict = Body(...)):
         forecast_next_7,
         avg_daily_sales,
         low_stock_items,
+        num_orders_short,
+        total_sales_short_period,
+        avg_order_value_short,
     )
 
     # 3) Build alerts (independent of AI)
@@ -662,7 +961,7 @@ async def analyze(payload: dict = Body(...)):
         alerts = [f"⚠️ Database error: {error_msg}"]
     else:
         alerts = build_alerts(
-            total_sales,
+            total_sales_all_time,
             values_short,
             short_days,
             top_items,
@@ -672,11 +971,15 @@ async def analyze(payload: dict = Body(...)):
             avg_daily_sales,
             payment_breakdown,
             low_stock_items,
+            num_orders_short,
+            total_sales_short_period,
+            avg_order_value_short,
+            heatmap_days,
+            heatmap_hours,
+            heatmap_matrix,
         )
 
-    assistant_message = None
-
-    # ---- Special-case questions: user emails ----
+    # 4) Special-case: list user emails
     if "email" in lower_msg and "user" in lower_msg and "list" in lower_msg:
         emails = get_all_user_emails(limit=500)
         if emails:
@@ -687,10 +990,63 @@ async def analyze(payload: dict = Body(...)):
         else:
             assistant_message = "I could not find any user emails in your database."
 
-    # ---- Special-case: cash vs QR in a given period ----
+    # 5) Special-case: inventory increases today
+       
+    if (
+        assistant_message is None
+        and ("inventory" in lower_msg or "stock" in lower_msg)
+        and ("today" in lower_msg or "happened" in lower_msg or "change" in lower_msg or "changes" in lower_msg)
+    ):
+        activities = get_inventory_activity_today()
+
+        if activities:
+            # We have real net changes from inventory_logs
+            increases = [a for a in activities if a["net_change"] > 0]
+            decreases = [a for a in activities if a["net_change"] < 0]
+
+            lines = ["Here is today’s inventory activity (net changes):", ""]
+            if increases:
+                lines.append("Increases:")
+                for a in increases:
+                    lines.append(f"- {a['item_name']}: +{a['net_change']} units")
+                lines.append("")
+
+            if decreases:
+                lines.append("Decreases (sales / adjustments):")
+                for a in decreases:
+                    lines.append(f"- {a['item_name']}: {a['net_change']} units")
+                lines.append("")
+
+            assistant_message = "\n".join(lines)
+        else:
+            # No logs: fall back to menu_items.updated_at
+            updated_today = get_menu_items_updated_today()
+            if updated_today:
+                lines = [
+                    "I didn't find detailed inventory change logs, "
+                    "but these items were updated today with their current stock levels:",
+                    "",
+                ]
+                for row in updated_today:
+                    lines.append(f"- {row['name']}: {row['stock_level']} units in stock now")
+                lines.append(
+                    "\nNote: because there are no per-change logs, I can’t tell "
+                    "exactly how many units they increased or decreased today."
+                )
+                assistant_message = "\n".join(lines)
+            else:
+                assistant_message = (
+                    "I couldn't find any recorded inventory changes for today. "
+                    "If you edited stock directly in the menu items table but "
+                    "updated_at is not today, those edits will not appear as "
+                    "“today’s activity”."
+                )
+
+
+
+    # 6) Special-case: cash vs QR payments
     if assistant_message is None and "cash" in lower_msg and "qr" in lower_msg:
         try:
-            # Reuse the same window the user requested (short_days)
             breakdown = get_payment_breakdown(last_n_days=short_days)
         except Exception as e:
             assistant_message = (
@@ -716,7 +1072,7 @@ async def analyze(payload: dict = Body(...)):
                     "in this period."
                 )
 
-    # ---- Normal path – use the AI for a smart answer ----
+    # 7) Normal path – use the AI for a smart answer
     if assistant_message is None:
         if error_msg:
             assistant_message = (
@@ -729,32 +1085,32 @@ async def analyze(payload: dict = Body(...)):
                 user_message or "(no question provided)", metrics_summary
             )
 
-    # 6) KPIs for the cards
-        kpis = [
+    # 8) KPIs (3 cards: total all time, total window, forecast next 7 days)
+    kpis = [
         {
             "label": "Total Sales (All Time)",
-            "value": total_sales,
+            "value": total_sales_all_time,
             "unit": "USD",
             "note": "All non-cancelled orders, entire history",
         },
         {
-            "label": f"Daily Average (Last {short_days} Days)",
-            "value": avg_daily_sales,
+            "label": f"Total Sales (Last {short_days} Days)",
+            "value": total_sales_short_period,
             "unit": "USD",
-            "note": "Average of daily totals in the selected window",
+            "note": "Non-cancelled orders in the selected window",
         },
         {
             "label": "Forecast – Next 7 Days",
             "value": forecast_next_7,
             "unit": "USD",
-            "note": f"Trend-based forecast from the last {short_days} days (capped to avoid outliers)",
+            "note": f"Trend-based forecast using the last {short_days} days",
         },
     ]
 
-
-    # 7) Visualization configs for the frontend
+    # 9) Visualization configs for the frontend
     visualizations = []
 
+    # Historical sales line chart
     visualizations.append(
         {
             "id": "sales_7d",
@@ -766,17 +1122,56 @@ async def analyze(payload: dict = Body(...)):
         }
     )
 
-    visualizations.append(
-        {
-            "id": "sales_30d",
-            "type": "line",
-            "title": f"Sales - Last {long_days} Days",
-            "x": labels_long,
-            "y": values_long,
-            "seriesName": "Total Sales",
-        }
-    )
+    # Forecast line chart for the same horizon
+    if forecast_values and values_short:
+        try:
+            last_label = labels_short[-1]
+            start_date = datetime.strptime(last_label, "%Y-%m-%d")
+        except Exception:
+            start_date = datetime.utcnow()
 
+        forecast_labels = [
+            (start_date + timedelta(days=i)).strftime("%Y-%m-%d")
+            for i in range(1, short_days + 1)
+        ]
+
+        visualizations.append(
+            {
+                "id": "forecast_short",
+                "type": "line",
+                "title": f"Forecast - Next {short_days} Days",
+                "x": forecast_labels,
+                "y": forecast_values,
+                "seriesName": "Forecast Sales",
+            }
+        )
+            # Forecast line for the next 7 days (for the second chart)
+    # We turn the total 7-day forecast into a per-day forecast series.
+    if values_short and forecast_next_7 > 0:
+        per_day = forecast_next_7 / 7.0
+
+        start_date = datetime.today().date() + timedelta(days=1)
+        forecast_labels = []
+        forecast_values = []
+
+        for i in range(7):
+            d = start_date + timedelta(days=i)
+            forecast_labels.append(d.strftime("%Y-%m-%d"))
+            forecast_values.append(per_day)
+
+        visualizations.append(
+            {
+                "id": "forecast_7d",
+                "type": "line",
+                "title": "Forecast - Next 7 Days",
+                "x": forecast_labels,
+                "y": forecast_values,
+                "seriesName": "Forecast",
+            }
+        )
+
+
+    # Top items bar chart
     if top_items:
         visualizations.append(
             {
@@ -789,6 +1184,7 @@ async def analyze(payload: dict = Body(...)):
             }
         )
 
+    # Worst items bar chart
     if worst_items:
         visualizations.append(
             {
@@ -798,6 +1194,19 @@ async def analyze(payload: dict = Body(...)):
                 "x": [row["item_name"] for row in worst_items],
                 "y": [float(row["qty"] or 0) for row in worst_items],
                 "seriesName": "Units Sold",
+            }
+        )
+
+    # Time-of-day / weekday heatmap
+    if heatmap_days and heatmap_hours and heatmap_matrix:
+        visualizations.append(
+            {
+                "id": "traffic_heatmap",
+                "type": "heatmap",
+                "title": f"Traffic Heatmap (Last {short_days} Days)",
+                "days": heatmap_days,
+                "hours": heatmap_hours,
+                "matrix": heatmap_matrix,
             }
         )
 
