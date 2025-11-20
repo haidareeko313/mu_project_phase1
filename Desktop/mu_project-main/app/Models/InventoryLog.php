@@ -9,12 +9,19 @@ class InventoryLog extends Model
 {
     use HasFactory;
 
-    protected $fillable = [
+        protected $fillable = [
         'menu_item_id',
-        'user_id',           // filled by observer if omitted
-        'action',            // 'order' | 'adjustment' | etc.
-        'quantity_changed',  // integer (+ add, - remove)
-    ];
+        'user_id',
+        'action',
+        'quantity_changed',
+        'stock_after',        
+        ];
+
+        protected $casts = [
+            'quantity_changed' => 'integer',
+            'stock_after'      => 'integer',
+        ];
+
 
     public function user()
     {

@@ -52,6 +52,14 @@ export default function AnalyticsIndex() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
+  // Suggested prompts for quick clicks
+  const quickPrompts = [
+    "Show me sales for the last 7 days",
+    "Best and worst items in the last 30 days",
+    "How many orders were CASH vs QR in the last 14 days?",
+    "What items increased in inventory today?",
+  ];
+
   // ----------------- CHAT + REQUEST HANDLERS -----------------
   const sendRequest = async (
     message,
@@ -164,6 +172,23 @@ export default function AnalyticsIndex() {
     await sendRequest(trimmed, true, null);
   };
 
+  const handleQuickAsk = (prompt) => {
+    if (isLoading) return;
+    setLastQuestion(prompt);
+    setInput("");
+    sendRequest(prompt, true, null);
+  };
+
+  const handleWindowChange = (days) => {
+    if (windowDays === days) return;
+    setWindowDays(days);
+
+    // If there was a previous question, quietly refresh the analytics for new window
+    if (lastQuestion && !isLoading) {
+      sendRequest(lastQuestion, false, days);
+    }
+  };
+
   // ----------------- HELPER FOR VISUALIZATIONS -----------------
   const getVis = (id, type) =>
     visualizations.find((v) => v.id === id && v.type === type);
@@ -218,15 +243,17 @@ export default function AnalyticsIndex() {
   return (
     <AuthenticatedLayout
       header={
-        <div className="flex flex-col gap-1">
-          <h2 className="text-xl font-semibold text-gray-100">
-            Data Analytics &amp; AI Assistant
-          </h2>
-          <p className="text-xs text-slate-400 max-w-3xl">
-            Chat with the assistant on the left. On the right you&apos;ll see
-            live KPIs, trends, item performance, payments, heatmaps, forecasts,
-            and alerts generated from your cafeteria data.
-          </p>
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-1">
+            <h2 className="text-xl font-semibold text-gray-100">
+              Data Analytics &amp; AI Assistant
+            </h2>
+            <p className="text-xs text-slate-400 max-w-3xl">
+              Chat with the assistant on the left. On the right you&apos;ll see
+              live KPIs, trends, item performance, payments, heatmaps, forecasts,
+              and alerts generated from your cafeteria data.
+            </p>
+          </div>
         </div>
       }
     >
@@ -236,9 +263,12 @@ export default function AnalyticsIndex() {
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1.85fr)] gap-6 items-start">
         {/* LEFT: CHAT PANEL */}
         <section className="xl:col-span-1">
-          <div className="rounded-2xl bg-slate-800 border border-slate-700 flex flex-col h-[34rem] max-h-[34rem]">
-            <div className="px-5 py-4 border-b border-slate-700">
-              <h3 className="text-lg font-semibold text-slate-50">
+          <div className="rounded-2xl bg-slate-900/90 border border-slate-700/80 flex flex-col h-[34rem] max-h-[34rem] shadow-[0_0_35px_rgba(15,23,42,0.9)] backdrop-blur">
+            <div className="px-5 py-4 border-b border-slate-700/80">
+              <h3 className="text-lg font-semibold text-slate-50 flex items-center gap-2">
+                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 via-sky-400 to-emerald-400 text-xs font-bold text-slate-950 shadow-md shadow-indigo-900/60">
+                  AI
+                </span>
                 Ask about your data
               </h3>
               <p className="mt-1 text-xs text-slate-400">
@@ -250,39 +280,81 @@ export default function AnalyticsIndex() {
                   &quot;What items increased in inventory today?&quot;
                 </span>
               </p>
+
+              {/* Quick prompts */}
+              <div className="mt-3 flex flex-wrap gap-2">
+                {quickPrompts.map((q) => (
+                  <button
+                    key={q}
+                    type="button"
+                    onClick={() => handleQuickAsk(q)}
+                    className="rounded-full border border-slate-600 bg-slate-950/80 px-3 py-1 text-[11px] text-slate-200 hover:border-indigo-400 hover:bg-slate-900/90 transition"
+                    disabled={isLoading}
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* MESSAGES AREA – fixed height with scroll */}
             <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-              {messages.map((m) => (
-                <div
-                  key={m.id}
-                  className={
-                    m.role === "user" ? "flex justify-end" : "flex justify-start"
-                  }
-                >
+              {messages.map((m) => {
+                const isUser = m.role === "user";
+                return (
                   <div
-                    className={[
-                      "max-w-[85%] rounded-2xl px-3 py-2 text-sm whitespace-pre-line",
-                      m.role === "user"
-                        ? "bg-indigo-600 text-white"
-                        : "bg-slate-700 text-slate-100",
-                    ].join(" ")}
+                    key={m.id}
+                    className={`flex ${isUser ? "justify-end" : "justify-start"}`}
                   >
-                    {m.text}
+                    <div className="flex max-w-[85%] items-start gap-2">
+                      {!isUser && (
+                        <div className="mt-1 h-6 w-6 shrink-0 rounded-full bg-gradient-to-br from-indigo-500 via-sky-400 to-emerald-400 text-[10px] font-semibold text-slate-950 flex items-center justify-center shadow-md shadow-indigo-900/60">
+                          AI
+                        </div>
+                      )}
+                      <div
+                        className={[
+                          "rounded-2xl px-3 py-2 text-xs leading-relaxed whitespace-pre-line shadow-md",
+                          isUser
+                            ? "bg-indigo-600 text-white shadow-indigo-900/60"
+                            : "bg-slate-800 text-slate-100 shadow-slate-900/60",
+                        ].join(" ")}
+                      >
+                        {m.text}
+                      </div>
+                      {isUser && (
+                        <div className="mt-1 h-6 w-6 shrink-0 rounded-full bg-slate-700 text-[10px] font-semibold text-slate-100 flex items-center justify-center shadow-md shadow-slate-900/60">
+                          U
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {isLoading && (
+                <div className="flex justify-start">
+                  <div className="flex max-w-[70%] items-center gap-2 rounded-2xl bg-slate-800 px-3 py-2 text-[11px] text-slate-200 shadow-md shadow-slate-900/60">
+                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 via-sky-400 to-emerald-400 text-[9px] font-semibold text-slate-950">
+                      •
+                    </span>
+                    <span>
+                      Thinking about your data
+                      <span className="animate-pulse">…</span>
+                    </span>
                   </div>
                 </div>
-              ))}
+              )}
             </div>
 
             {/* INPUT */}
             <form
               onSubmit={handleSubmit}
-              className="border-t border-slate-700 px-4 py-3 flex items-center gap-2"
+              className="border-t border-slate-700/80 px-4 py-3 flex items-center gap-2 bg-slate-900/80"
             >
               <input
                 type="text"
-                className="flex-1 rounded-full bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="flex-1 rounded-full bg-slate-950 border border-slate-600 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-400"
                 placeholder="Type your question about the data..."
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -290,7 +362,7 @@ export default function AnalyticsIndex() {
               />
               <button
                 type="submit"
-                className="px-4 py-2 rounded-full bg-indigo-600 hover:bg-indigo-500 text-sm font-medium text-white disabled:opacity-60"
+                className="px-4 py-2 rounded-full bg-indigo-600 hover:bg-indigo-500 text-sm font-medium text-white disabled:opacity-60 disabled:cursor-not-allowed shadow-md shadow-indigo-900/70"
                 disabled={isLoading}
               >
                 {isLoading ? "Thinking..." : "Send"}
@@ -520,8 +592,8 @@ export default function AnalyticsIndex() {
                     Alerts &amp; Insights
                   </h4>
                   <p className="text-[11px] text-slate-400">
-                    Only key alerts and a few smart suggestions based on
-                    your latest data.
+                    Only key alerts and a few smart suggestions based on your
+                    latest data.
                   </p>
                 </div>
                 <div className="flex items-center gap-1 text-[10px] text-slate-400">

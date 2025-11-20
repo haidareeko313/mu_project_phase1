@@ -71,13 +71,13 @@ class OrderController extends Controller
         // Simplified transformer (UI fields)
         $orders->getCollection()->transform(function (Order $o) {
             return [
-                'id'         => $o->id,
-                'user'       => $o->user?->email ?? '—',
-                'status'     => $o->status ?? 'pending',
-                'paid'       => $o->status === 'completed' ? 'Yes' : 'No',
-                'method'     => $o->method ?? '—',
-                'cash_code'  => $o->cash_code ?? '—',
-                'created'    => optional($o->created_at)->format('Y-m-d H:i:s') ?? '—',
+                'id'        => $o->id,
+                'user'      => $o->user?->email ?? '—',
+                'status'    => $o->status ?? 'pending',
+                'paid'      => $o->status === 'completed' ? 'Yes' : 'No',
+                'method'    => $o->method ?? '—',
+                'cash_code' => $o->cash_code ?? '—',
+                'created'   => optional($o->created_at)->format('Y-m-d H:i:s') ?? '—',
             ];
         });
 
@@ -96,6 +96,7 @@ class OrderController extends Controller
 
     /**
      * Create a new order from the Cafeteria page.
+     * - Validates there is enough stock for each item
      * - Inserts the order (and order_items if present)
      * - Decrements stock_qty for each item
      * - Writes an InventoryLog row per item (negative qty)
@@ -109,16 +110,56 @@ class OrderController extends Controller
             'items.*.qty' => ['required', 'integer', 'min:1'],
         ]);
 
-        $user = $request->user();
+        $user         = $request->user();
+        $itemsPayload = collect($request->input('items'));
 
-        $ids     = collect($request->input('items'))->pluck('id')->all();
-        $dbItems = MenuItem::whereIn('id', $ids)->get(['id','price','name','stock_qty'])->keyBy('id');
+        if ($itemsPayload->isEmpty()) {
+            return back()->with('error', 'Your cart is empty.');
+        }
 
+        // Load items from DB with stock_qty
+        $ids     = $itemsPayload->pluck('id')->all();
+        $dbItems = MenuItem::whereIn('id', $ids)
+            ->get(['id', 'price', 'name', 'stock_qty'])
+            ->keyBy('id');
+
+        // 1) Check stock availability first
+        $insufficient = [];
+        foreach ($itemsPayload as $it) {
+            $mi = $dbItems[$it['id']] ?? null;
+            if (!$mi) {
+                continue;
+            }
+
+            $requested = (int) $it['qty'];
+            $available = (int) ($mi->stock_qty ?? 0);
+
+            if ($requested > $available) {
+                $insufficient[] = sprintf(
+                    '%s (requested %d, available %d)',
+                    $mi->name,
+                    $requested,
+                    $available
+                );
+            }
+        }
+
+        if (!empty($insufficient)) {
+            $msg = 'Not enough stock for: ' . implode(', ', $insufficient) . '.';
+            return back()
+                ->withInput()
+                ->with('error', $msg);
+        }
+
+        // 2) Build order lines + total (now we know stock is ok)
         $total = 0.0;
         $lines = [];
-        foreach ($request->items as $it) {
+
+        foreach ($itemsPayload as $it) {
             $mi = $dbItems[$it['id']] ?? null;
-            if (!$mi) continue;
+            if (!$mi) {
+                continue;
+            }
 
             $qty   = (int) $it['qty'];
             $price = (float) ($mi->price ?? 0);
@@ -135,29 +176,39 @@ class OrderController extends Controller
             return back()->with('error', 'Your cart is empty.');
         }
 
+        // Detect order_items columns (for flexible schema)
         $hasOrderItems = Schema::hasTable('order_items');
-        $qtyCol   = $hasOrderItems
+        $qtyCol        = $hasOrderItems
             ? (Schema::hasColumn('order_items', 'qty')
                 ? 'qty'
                 : (Schema::hasColumn('order_items', 'quantity') ? 'quantity' : null))
             : null;
-        $priceCol = $hasOrderItems
+        $priceCol      = $hasOrderItems
             ? (Schema::hasColumn('order_items', 'unit_price')
                 ? 'unit_price'
                 : (Schema::hasColumn('order_items', 'price') ? 'price' : null))
             : null;
 
-        [$newOrder, $pickup] = DB::transaction(function () use ($request, $user, $total, $lines, $qtyCol, $priceCol, $hasOrderItems) {
+        // 3) Transaction: create order, items, adjust stock & logs
+        [$newOrder, $pickup] = DB::transaction(function () use (
+            $request,
+            $user,
+            $total,
+            $lines,
+            $qtyCol,
+            $priceCol,
+            $hasOrderItems
+        ) {
             // create order
-            $o = new Order();
+            $o          = new Order();
             $o->user_id = $user->id;
             $o->status  = 'pending';
             $o->method  = $request->method;
             $o->total   = $total;
-            $pickup = null;
+            $pickup     = null;
 
             if ($request->method === 'CASH') {
-                $pickup = str_pad((string) random_int(0, 9999), 4, '0', STR_PAD_LEFT);
+                $pickup       = str_pad((string) random_int(0, 9999), 4, '0', STR_PAD_LEFT);
                 $o->cash_code = $pickup;
             }
 
@@ -181,22 +232,26 @@ class OrderController extends Controller
                 }
             }
 
-            // 🔻 decrement stock + 📝 write inventory logs
             foreach ($lines as $ln) {
-                // decrement stock (never below zero)
-                DB::table('menu_items')
-                    ->where('id', $ln['menu_item_id'])
-                    ->update([
-                        'stock_qty' => DB::raw('GREATEST(stock_qty - '.(int)$ln['qty'].', 0)')
-                    ]);
-
-                InventoryLog::create([
-                    'menu_item_id'     => $ln['menu_item_id'],
-                    'user_id'          => $user->id ?? null,
-                    'action'           => 'order',
-                    'quantity_changed' => -1 * (int)$ln['qty'], // negative: removed from stock
+            // decrement stock (never below zero)
+            DB::table('menu_items')
+                ->where('id', $ln['menu_item_id'])
+                ->update([
+                    'stock_qty' => DB::raw('GREATEST(stock_qty - '.(int)$ln['qty'].', 0)')
                 ]);
-            }
+
+            // read the stock AFTER decrement
+            $after = \App\Models\MenuItem::whereKey($ln['menu_item_id'])->value('stock_qty');
+
+            InventoryLog::create([
+                'menu_item_id'     => $ln['menu_item_id'],
+                'user_id'          => $user->id ?? null,
+                'action'           => 'order',
+                'quantity_changed' => -1 * (int)$ln['qty'],  // negative: removed from stock
+                'stock_after'      => (int) $after,          // snapshot after this order
+            ]);
+        }
+
 
             return [$o, $pickup];
         });

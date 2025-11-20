@@ -61,16 +61,17 @@ class MenuItemController extends Controller
         // create item
         $item = MenuItem::create($validated);
 
-        // 📝 log initial stock if non-zero
         $initial = (int) ($validated['stock_qty'] ?? 0);
         if ($initial !== 0) {
             InventoryLog::create([
-                'menu_item_id'     => $item->id,
-                'user_id'          => $request->user()->id ?? null,
-                'action'           => 'adjustment',
-                'quantity_changed' => $initial, // positive add
-            ]);
-        }
+            'menu_item_id'     => $item->id,
+            'user_id'          => $request->user()->id ?? null,
+            'action'           => 'adjustment',
+            'quantity_changed' => $initial,          // positive add
+            'stock_after'      => $initial,          // stock right after creation
+    ]);
+}
+
 
         return redirect()->route('menuitems.index')->with('success', 'Item created.');
     }
@@ -121,6 +122,7 @@ class MenuItemController extends Controller
                 'user_id'          => $request->user()->id ?? null,
                 'action'           => 'adjustment',
                 'quantity_changed' => $delta, // +added / -removed
+                'stock_after'      => $new,
             ]);
         }
 
